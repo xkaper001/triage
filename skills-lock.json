@@ -13,6 +13,18 @@
       "skillPath": "coral/SKILL.md",
       "computedHash": "415c43411b536c9232d50e9bab8803fb59c797ca4e03884e360751a4d2ab5c42"
     },
+    "coral-create-source-spec": {
+      "source": "withcoral/skills",
+      "sourceType": "github",
+      "skillPath": "coral-create-source-spec/SKILL.md",
+      "computedHash": "c8a1f3bb2f6ac45d6d532edf579fc91af9285a06e939fecc1c09af9e22cd211e"
+    },
+    "coral-review-source-spec": {
+      "source": "withcoral/skills",
+      "sourceType": "github",
+      "skillPath": "coral-review-source-spec/SKILL.md",
+      "computedHash": "61eb12f415f4fa0eeb633734262700f28ba6c3a60029ad7f6d8ac4310ec4a409"
+    },
     "workers-best-practices": {
       "source": "cloudflare/skills",
       "sourceType": "github",
