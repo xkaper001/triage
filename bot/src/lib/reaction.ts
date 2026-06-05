@@ -1,8 +1,10 @@
-import { type MessageReaction, type User, type PartialMessageReaction, type PartialUser } from "discord.js";
+import { type MessageReaction, type User, type PartialMessageReaction, type PartialUser, ChannelType } from "discord.js";
 import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
+import { getForumChannelId } from "./store.js";
 
-const APPROVAL_EMOJIS = new Set(["✅", "👍", "✔️", "check"]);
+// ➕ (U+2795) — confirm you're affected by this unknown issue
+const CONFIRM_EMOJIS = new Set(["➕", "heavy_plus_sign"]);
 
 export async function handleReactionAdd(
   reaction: MessageReaction | PartialMessageReaction,
@@ -21,25 +23,36 @@ export async function handleReactionAdd(
   }
 
   const emojiName = reaction.emoji.name ?? "";
-  if (!APPROVAL_EMOJIS.has(emojiName)) return;
+  if (!CONFIRM_EMOJIS.has(emojiName)) return;
 
   const message = reaction.message;
+  const guildId = message.guildId;
+  if (!guildId) return;
+
+  // Only relay reactions inside forum thread posts
+  const channel = message.channel;
+  if (channel.type !== ChannelType.PublicThread) return;
+
+  const forumChannelId = getForumChannelId(guildId);
+  if (!forumChannelId || channel.parentId !== forumChannelId) return;
+
   const res = await fetch(webhookUrl(env, "alert"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      action: "approve_by_reaction",
+      action: "reaction_confirm",
       message_id: message.id,
       channel_id: message.channelId,
-      guild_id: message.guildId,
+      guild_id: guildId,
       user_id: user.id,
       emoji: emojiName,
+      reaction_count: reaction.count ?? 1,
     }),
   });
 
   if (!res.ok) {
     console.error("Kestra alert webhook failed:", res.status, await res.text());
   } else {
-    console.log(`Reaction approval relayed by ${user.id} on ${message.id}`);
+    console.log(`Reaction confirm relayed by ${user.id} on ${message.id}`);
   }
 }

@@ -12,9 +12,11 @@ export async function handleThreadCreate(thread: ThreadChannel, env: BotEnv): Pr
   if (thread.parentId !== forumChannelId) return;
 
   let firstMessage = "";
+  let firstMessageId = "";
   try {
     const starter = await thread.fetchStarterMessage();
     firstMessage = starter?.content ?? "";
+    firstMessageId = starter?.id ?? "";
   } catch (err) {
     console.warn("Could not fetch starter message:", err);
   }
@@ -29,6 +31,7 @@ export async function handleThreadCreate(thread: ThreadChannel, env: BotEnv): Pr
       thread_name: thread.name,
       parent_channel_id: thread.parentId,
       first_message: firstMessage,
+      first_message_id: firstMessageId,
     }),
   });
 
