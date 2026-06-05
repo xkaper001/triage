@@ -1,6 +1,6 @@
 /**
  * One-time script to register Discord slash commands globally.
- * Run: pnpm register
+ * Run: npm run register
  *
  * Requires DISCORD_BOT_TOKEN and DISCORD_APP_ID in env.
  */
@@ -14,37 +14,37 @@ if (!token || !appId) {
   process.exit(1);
 }
 
-const ADMIN_ONLY = "8"; // ADMINISTRATOR permission flag
+const ADMIN_ONLY = "8"; // ADMINISTRATOR permission bit
 
 const commands = [
   {
     name: "setup",
     type: 1,
-    description: "Configure OpenAI API key, base URL, and default GitHub repo",
+    description: "Open the bot configuration panel (AI provider, GitHub, forum channel)",
     default_member_permissions: ADMIN_ONLY,
+  },
+  {
+    name: "repo",
+    type: 1,
+    description: "Set the default GitHub repository for issue filing (owner/repo)",
+    default_member_permissions: ADMIN_ONLY,
+    options: [
+      { name: "repo", description: "Repository in owner/repo format", type: 3, required: false },
+    ],
   },
   {
     name: "set-api-key",
     type: 1,
-    description: "Set the OpenAI API key",
+    description: "Quickly update the OpenAI API key",
     default_member_permissions: ADMIN_ONLY,
   },
   {
     name: "set-baseurl",
     type: 1,
-    description: "Set the OpenAI base URL",
+    description: "Update the OpenAI-compatible base URL",
     default_member_permissions: ADMIN_ONLY,
     options: [
       { name: "url", description: "OpenAI-compatible base URL", type: 3, required: false },
-    ],
-  },
-  {
-    name: "set-repo",
-    type: 1,
-    description: "Set the default GitHub repo (OWNER/REPO)",
-    default_member_permissions: ADMIN_ONLY,
-    options: [
-      { name: "repo", description: "Repository in OWNER/REPO format", type: 3, required: false },
     ],
   },
   {
@@ -65,8 +65,13 @@ const commands = [
   {
     name: "status",
     type: 1,
-    description: "Show current bot configuration",
+    description: "Show the currently monitored forum channel",
     default_member_permissions: ADMIN_ONLY,
+  },
+  {
+    name: "help",
+    type: 1,
+    description: "Show all available commands and what they do",
   },
 ];
 

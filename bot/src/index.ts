@@ -4,7 +4,7 @@ import { loadEnv, webhookUrl } from "./types.js";
 import { loadConfig } from "./lib/store.js";
 import { handleThreadCreate } from "./lib/relay.js";
 import { handleReactionAdd } from "./lib/reaction.js";
-import { handleCommand, handleButton, handleModal } from "./lib/commands.js";
+import { handleCommand, handleButton, handleModal, handleSelectMenu } from "./lib/commands.js";
 
 const env = loadEnv();
 console.log("[startup] env loaded:", {
@@ -56,12 +56,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const type = interaction.isChatInputCommand() ? "command"
     : interaction.isButton() ? "button"
     : interaction.isModalSubmit() ? "modal"
+    : interaction.isChannelSelectMenu() ? "channel_select"
     : "other";
   console.log(`[interaction] type=${type} guild=${interaction.guildId} user=${interaction.user?.id}`);
   try {
     if (interaction.isChatInputCommand()) await handleCommand(interaction, env);
     else if (interaction.isButton()) await handleButton(interaction, env);
     else if (interaction.isModalSubmit()) await handleModal(interaction, env);
+    else if (interaction.isChannelSelectMenu()) await handleSelectMenu(interaction, env);
     else console.log(`[interaction] unhandled type=${type}`);
   } catch (err) {
     console.error(`[interaction] UNHANDLED ERROR type=${type}:`, err);
