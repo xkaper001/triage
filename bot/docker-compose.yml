@@ -1,0 +1,16 @@
+services:
+  triage-bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - bot-data:/data
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - KESTRA_CLOUD_URL=${KESTRA_CLOUD_URL}
+      - KESTRA_NAMESPACE=${KESTRA_NAMESPACE}
+      - KESTRA_TRIAGE_WEBHOOK_KEY=${KESTRA_TRIAGE_WEBHOOK_KEY}
+      - KESTRA_ALERT_WEBHOOK_KEY=${KESTRA_ALERT_WEBHOOK_KEY}
+      - KESTRA_CONFIG_WEBHOOK_KEY=${KESTRA_CONFIG_WEBHOOK_KEY}
+
+volumes:
+  bot-data:
