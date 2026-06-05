@@ -1,0 +1,32 @@
+id: update_config
+namespace: discord.triage
+description: >
+  Webhook-triggered flow that writes guild-specific config to the KV store.
+  Receives guild_id, key, and value; stores as GUILD_{guild_id}_{key}.
+  No API token needed — webhook key is the auth.
+
+inputs:
+  - id: guild_id
+    type: STRING
+    defaults: "{{ trigger.body.guild_id }}"
+  - id: key
+    type: STRING
+    defaults: "{{ trigger.body.key }}"
+  - id: value
+    type: STRING
+    defaults: "{{ trigger.body.value }}"
+
+tasks:
+  - id: set_kv
+    type: io.kestra.plugin.core.kv.Set
+    key: "GUILD_{{ inputs.guild_id }}_{{ inputs.key }}"
+    value: "{{ inputs.value }}"
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: 0j8BRKoiXR
+    inputs:
+      guild_id: "{{ trigger.body.guild_id }}"
+      key: "{{ trigger.body.key }}"
+      value: "{{ trigger.body.value }}"

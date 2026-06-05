@@ -1,0 +1,376 @@
+id: triage_draft_alert
+namespace: discord.triage
+description: >
+  Triggered when a cluster reaches the ≥3 report threshold or when a
+  human approves/rejects a draft via Discord. In auto mode it drafts
+  an aggregated GitHub issue and posts it to the admin channel.
+  In approval mode it creates the real GitHub issue.
+
+inputs:
+  - id: action
+    type: STRING
+    defaults: "{{ trigger.body.action ?? 'draft' }}"
+  - id: cluster_id
+    type: STRING
+    defaults: "{{ trigger.body.cluster_id ?? '' }}"
+  - id: issue_key
+    type: STRING
+    defaults: "{{ trigger.body.issue_key ?? '' }}"
+  - id: message_id
+    type: STRING
+    defaults: "{{ trigger.body.message_id ?? '' }}"
+  - id: approver_id
+    type: STRING
+    defaults: "{{ trigger.body.approver_id ?? '' }}"
+  - id: approver_name
+    type: STRING
+    defaults: "{{ trigger.body.approver_name ?? '' }}"
+  - id: interaction_token
+    type: STRING
+    defaults: "{{ trigger.body.interaction_token ?? '' }}"
+
+  - id: guild_id
+    type: STRING
+    defaults: "{{ trigger.body.guild_id ?? '' }}"
+
+  - id: openai_api_key
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_OPENAI_API_KEY') }}"
+  - id: openai_base_url
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_OPENAI_BASE_URL') | default('https://llm.kimchi.dev/openai/v1') }}"
+  - id: admin_channel_id
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_ADMIN_CHANNEL_ID') }}"
+  - id: github_token
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_GITHUB_TOKEN') }}"
+  - id: github_repo
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_DEFAULT_REPO') }}"
+  - id: qdrant_url
+    type: STRING
+    defaults: "{{ kv('QDRANT_URL') }}"
+  - id: qdrant_api_key
+    type: STRING
+    defaults: "{{ secret('QDRANT_API_KEY') }}"
+  - id: discord_bot_token
+    type: STRING
+    defaults: "{{ secret('DISCORD_BOT_TOKEN') }}"
+
+tasks:
+  - id: route
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.action }}"
+    cases:
+      "draft":
+        - id: check_cluster_id
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ inputs.cluster_id is empty }}"
+          then:
+            - id: log_skip_empty
+              type: io.kestra.plugin.core.log.Log
+              message: "No cluster_id provided, skipping"
+          else:
+            - id: fetch_cluster
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/scroll"
+              method: POST
+              contentType: application/json
+              headers:
+                api-key: "{{ inputs.qdrant_api_key }}"
+              body: |
+                {{ {
+                  "filter": {
+                    "must": [
+                      {
+                        "key": "cluster_id",
+                        "match": {
+                          "value": inputs.cluster_id
+                        }
+                      }
+                    ]
+                  },
+                  "limit": 100,
+                  "with_payload": true
+                } | toJson }}
+
+            - id: check_empty
+              type: io.kestra.plugin.core.flow.If
+              condition: "{{ outputs.fetch_cluster.body.result.points is empty }}"
+              then:
+                - id: log_no_points
+                  type: io.kestra.plugin.core.log.Log
+                  message: "No points found for cluster {{ inputs.cluster_id }}"
+              else:
+                - id: extract_data
+                  type: io.kestra.plugin.scripts.python.Script
+                  dependencies:
+                    - kestra
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  containerImage: python:3.13-slim
+                  warningOnStdErr: false
+                  script: |
+                    import json
+                    points = json.loads("""{{ outputs.fetch_cluster.body | toJson }}""")["result"]["points"]
+                    summaries = [p["payload"]["summary"] for p in points]
+                    combined = "\n---\n".join(summaries)
+                    from kestra import Kestra
+                    Kestra.outputs({
+                      "summaries_count": len(summaries),
+                      "combined": combined,
+                      "point_ids": [p["id"] for p in points]
+                    })
+
+                - id: draft_issue
+                  type: io.kestra.plugin.ai.completion.ChatCompletion
+                  provider:
+                    type: io.kestra.plugin.ai.provider.OpenAI
+                    apiKey: "{{ inputs.openai_api_key }}"
+                    modelName: gpt-4o
+                    baseUrl: "{{ inputs.openai_base_url }}"
+                  messages:
+                    - type: SYSTEM
+                      content: "You are a senior engineer drafting a GitHub issue from multiple related Discord bug reports. Produce a concise title and detailed body."
+                    - type: USER
+                      content: |
+                        Here are {{ outputs.extract_data.vars.summaries_count }} related reports:
+                        {{ outputs.extract_data.vars.combined }}
+
+                        Draft a single GitHub issue title and body that captures the core problem, impact, and any reproduction steps.
+
+                - id: parse_draft
+                  type: io.kestra.plugin.scripts.python.Script
+                  dependencies:
+                    - kestra
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  containerImage: python:3.13-slim
+                  warningOnStdErr: false
+                  script: |
+                    draft_text = """{{ outputs.draft_issue.textOutput }}"""
+                    lines = draft_text.splitlines()
+                    title = lines[0].lstrip("# ").strip()
+                    body = "\n".join(lines[1:]).strip()
+                    from kestra import Kestra
+                    Kestra.outputs({"title": title, "body": body[:4096]})
+
+                - id: send_alert
+                  type: io.kestra.plugin.core.http.Request
+                  uri: "https://discord.com/api/v10/channels/{{ inputs.admin_channel_id }}/messages"
+                  method: POST
+                  contentType: application/json
+                  headers:
+                    Authorization: "Bot {{ inputs.discord_bot_token }}"
+                  body: |
+                    {{ {
+                      "content": '📋 Draft issue ready for cluster `' ~ inputs.cluster_id ~ '`',
+                      "embeds": [
+                        {
+                          "title": outputs.parse_draft.vars.title,
+                          "description": outputs.parse_draft.vars.body,
+                          "footer": {
+                            "text": "Reports: " ~ outputs.extract_data.vars.summaries_count ~ " | Cluster: " ~ inputs.cluster_id
+                          }
+                        }
+                      ],
+                      "components": [
+                        {
+                          "type": 1,
+                          "components": [
+                            {"type": 2, "style": 3, "label": "✅ Approve", "custom_id": "approve_issue:" ~ inputs.cluster_id},
+                            {"type": 2, "style": 4, "label": "❌ Reject", "custom_id": "reject_issue:" ~ inputs.cluster_id}
+                          ]
+                        }
+                      ]
+                    } | toJson }}
+
+                - id: update_qdrant
+                  type: io.kestra.plugin.scripts.python.Script
+                  dependencies:
+                    - requests
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  containerImage: python:3.13-slim
+                  warningOnStdErr: false
+                  script: |
+                    import requests
+                    url = "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/payload"
+                    headers = {"api-key": "{{ inputs.qdrant_api_key }}", "Content-Type": "application/json"}
+                    payload = {
+                      "payload": {
+                        "alert_sent": True,
+                        "draft_title": "{{ outputs.parse_draft.vars.title }}",
+                        "draft_body": "{{ outputs.parse_draft.vars.body }}"
+                      },
+                      "points": {{ outputs.extract_data.vars.point_ids | toJson }}
+                    }
+                    r = requests.post(url, headers=headers, json=payload)
+                    r.raise_for_status()
+                    print("Updated Qdrant with alert_sent=true")
+
+      "approve":
+        - id: check_issue_key
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ inputs.issue_key is empty }}"
+          then:
+            - id: log_skip_approve
+              type: io.kestra.plugin.core.log.Log
+              message: "No issue_key provided, skipping"
+          else:
+            - id: fetch_draft
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/scroll"
+              method: POST
+              contentType: application/json
+              headers:
+                api-key: "{{ inputs.qdrant_api_key }}"
+              body: |
+                {{ {
+                  "filter": {
+                    "must": [
+                      {
+                        "key": "cluster_id",
+                        "match": {
+                          "value": inputs.issue_key
+                        }
+                      }
+                    ]
+                  },
+                  "limit": 1,
+                  "with_payload": true
+                } | toJson }}
+
+            - id: check_not_found
+              type: io.kestra.plugin.core.flow.If
+              condition: "{{ outputs.fetch_draft.body.result.points is empty }}"
+              then:
+                - id: log_not_found
+                  type: io.kestra.plugin.core.log.Log
+                  message: "Cluster not found for key {{ inputs.issue_key }}"
+              else:
+                - id: create_github_issue
+                  type: io.kestra.plugin.github.issues.Create
+                  oauthToken: "{{ inputs.github_token }}"
+                  repository: "{{ inputs.github_repo }}"
+                  title: "{{ outputs.fetch_draft.body.result.points[0].payload.draft_title | default('Aggregated issue') }}"
+                  body: |
+                    {{ outputs.fetch_draft.body.result.points[0].payload.draft_body | default('') }}
+
+                    _approved by {{ inputs.approver_name }}_
+
+                - id: mark_created
+                  type: io.kestra.plugin.scripts.python.Script
+                  dependencies:
+                    - requests
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  containerImage: python:3.13-slim
+                  warningOnStdErr: false
+                  script: |
+                    import requests
+                    url = "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/payload"
+                    headers = {"api-key": "{{ inputs.qdrant_api_key }}", "Content-Type": "application/json"}
+                    payload = {
+                      "payload": {
+                        "github_issue_number": {{ outputs.create_github_issue.issueNumber }},
+                        "github_issue_url": "{{ outputs.create_github_issue.issueUrl }}",
+                        "status": "created"
+                      },
+                      "points": [{{ outputs.fetch_draft.body.result.points[0].id }}]
+                    }
+                    r = requests.post(url, headers=headers, json=payload)
+                    r.raise_for_status()
+                    print("Marked cluster as created")
+
+      "approve_by_reaction":
+        - id: check_message_id
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ inputs.message_id is empty }}"
+          then:
+            - id: log_skip_reaction
+              type: io.kestra.plugin.core.log.Log
+              message: "No message_id provided, skipping"
+          else:
+            - id: find_by_message
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ inputs.qdrant_url }}/collections/pending_issues/points/scroll"
+              method: POST
+              contentType: application/json
+              headers:
+                api-key: "{{ inputs.qdrant_api_key }}"
+              body: |
+                {{ {
+                  "filter": {
+                    "must": [
+                      {
+                        "key": "discord_message_id",
+                        "match": {
+                          "value": inputs.message_id
+                        }
+                      }
+                    ]
+                  },
+                  "limit": 1,
+                  "with_payload": true
+                } | toJson }}
+
+            - id: check_not_found_reaction
+              type: io.kestra.plugin.core.flow.If
+              condition: "{{ outputs.find_by_message.body.result.points is empty }}"
+              then:
+                - id: log_not_found_reaction
+                  type: io.kestra.plugin.core.log.Log
+                  message: "Pending issue not found for message {{ inputs.message_id }}"
+              else:
+                - id: create_github_issue_reaction
+                  type: io.kestra.plugin.github.issues.Create
+                  oauthToken: "{{ inputs.github_token }}"
+                  repository: "{{ inputs.github_repo }}"
+                  title: "{{ outputs.find_by_message.body.result.points[0].payload.draft_title | default('Aggregated issue') }}"
+                  body: |
+                    {{ outputs.find_by_message.body.result.points[0].payload.draft_body | default('') }}
+
+                    _approved by {{ inputs.approver_name }}_
+
+                - id: delete_message
+                  type: io.kestra.plugin.core.http.Request
+                  uri: "https://discord.com/api/v10/channels/{{ inputs.admin_channel_id }}/messages/{{ inputs.message_id }}"
+                  method: DELETE
+                  headers:
+                    Authorization: "Bot {{ inputs.discord_bot_token }}"
+
+                - id: mark_created_reaction
+                  type: io.kestra.plugin.scripts.python.Script
+                  dependencies:
+                    - requests
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  containerImage: python:3.13-slim
+                  warningOnStdErr: false
+                  script: |
+                    import requests
+                    url = "{{ inputs.qdrant_url }}/collections/pending_issues/points/payload"
+                    headers = {"api-key": "{{ inputs.qdrant_api_key }}", "Content-Type": "application/json"}
+                    payload = {
+                      "payload": {
+                        "github_issue_number": {{ outputs.create_github_issue_reaction.issueNumber }},
+                        "github_issue_url": "{{ outputs.create_github_issue_reaction.issueUrl }}",
+                        "status": "created"
+                      },
+                      "points": [{{ outputs.find_by_message.body.result.points[0].id }}]
+                    }
+                    r = requests.post(url, headers=headers, json=payload)
+                    r.raise_for_status()
+                    print("Pending issue marked as created")
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: Y8SNnsC7wh
+
+timeout: PT5M
+concurrency:
+  behavior: QUEUE
+  limit: 1

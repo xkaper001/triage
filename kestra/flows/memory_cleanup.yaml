@@ -1,0 +1,93 @@
+id: memory_cleanup
+namespace: discord.triage
+description: >
+  Delete points from the Qdrant discord_unmatched collection that are older
+  than 30 days to prevent unbounded growth.
+
+inputs:
+  - id: qdrant_url
+    type: STRING
+    defaults: "{{ kv('QDRANT_URL') }}"
+
+  - id: qdrant_api_key
+    type: STRING
+    defaults: "{{ secret('QDRANT_API_KEY') }}"
+
+  - id: qdrant_collection
+    type: STRING
+    defaults: "discord_unmatched"
+
+  - id: retention_days
+    type: INT
+    defaults: 30
+
+tasks:
+  - id: compute_cutoff
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ now() | dateAdd(-inputs.retention_days, 'DAYS') | date("yyyy-MM-dd'T'HH:mm:ss'Z'") }}"
+
+  - id: count_old
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ inputs.qdrant_url }}/collections/{{ inputs.qdrant_collection }}/points/count"
+    method: POST
+    contentType: application/json
+    headers:
+      api-key: "{{ inputs.qdrant_api_key }}"
+    body: |
+      {{ {
+        "filter": {
+          "must": [
+            {
+              "key": "created_at",
+              "range": {
+                "lt": outputs.compute_cutoff.value
+              }
+            }
+          ]
+        },
+        "exact": true
+      } | toJson }}
+
+  - id: maybe_delete
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.count_old.body.result.count > 0 }}"
+    then:
+      - id: delete_old
+        type: io.kestra.plugin.core.http.Request
+        uri: "{{ inputs.qdrant_url }}/collections/{{ inputs.qdrant_collection }}/points/delete"
+        method: POST
+        contentType: application/json
+        headers:
+          api-key: "{{ inputs.qdrant_api_key }}"
+        body: |
+          {{ {
+            "filter": {
+              "must": [
+                {
+                  "key": "created_at",
+                  "range": {
+                    "lt": outputs.compute_cutoff.value
+                  }
+                }
+              ]
+            }
+          } | toJson }}
+
+      - id: log_deleted
+        type: io.kestra.plugin.core.log.Log
+        message: "Deleted {{ outputs.count_old.body.result.count }} old points from {{ inputs.qdrant_collection }}"
+    else:
+      - id: log_nothing
+        type: io.kestra.plugin.core.log.Log
+        message: "Nothing to delete from {{ inputs.qdrant_collection }}"
+
+timeout: PT5M
+
+concurrency:
+  behavior: QUEUE
+  limit: 1
+
+triggers:
+  - id: daily-cleanup
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 3 * * *"

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "cloudflare": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "skillPath": "skills/cloudflare/SKILL.md",
+      "computedHash": "ecc9c0211c605451f7e8b437724f84810fe013d5ca6c653c51d046139d4ecbf7"
+    },
+    "coral": {
+      "source": "withcoral/skills",
+      "sourceType": "github",
+      "skillPath": "coral/SKILL.md",
+      "computedHash": "415c43411b536c9232d50e9bab8803fb59c797ca4e03884e360751a4d2ab5c42"
+    },
+    "workers-best-practices": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "skillPath": "skills/workers-best-practices/SKILL.md",
+      "computedHash": "420e1ad3eaeb8ed2016e6b34fff3757de6aa39899ec2bd6e9784a29c38e70f9a"
+    }
+  }
+}

@@ -1,0 +1,351 @@
+id: discord_triage
+namespace: discord.triage
+description: >
+  Webhook-triggered flow that receives a Discord forum post, summarizes it,
+  searches for matching GitHub issues and memory clusters, and either links
+  to an existing issue or stores the report for future clustering.
+
+inputs:
+  - id: discord_thread_id
+    type: STRING
+    defaults: "{{ trigger.body.discord_thread_id }}"
+  - id: discord_channel_id
+    type: STRING
+    defaults: "{{ trigger.body.discord_channel_id }}"
+  - id: discord_guild_id
+    type: STRING
+    defaults: "{{ trigger.body.discord_guild_id }}"
+  - id: thread_name
+    type: STRING
+    defaults: "{{ trigger.body.thread_name }}"
+  - id: parent_channel_id
+    type: STRING
+    defaults: "{{ trigger.body.parent_channel_id }}"
+  - id: first_message
+    type: STRING
+    defaults: "{{ trigger.body.first_message }}"
+
+  - id: openai_api_key
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.discord_guild_id ~ '_OPENAI_API_KEY') }}"
+  - id: openai_base_url
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.discord_guild_id ~ '_OPENAI_BASE_URL') | default('https://llm.kimchi.dev/openai/v1') }}"
+  - id: default_repo
+    type: STRING
+    defaults: "{{ kv('GUILD_' ~ trigger.body.discord_guild_id ~ '_DEFAULT_REPO') }}"
+  - id: qdrant_url
+    type: STRING
+    defaults: "{{ kv('QDRANT_URL') }}"
+  - id: qdrant_api_key
+    type: STRING
+    defaults: "{{ secret('QDRANT_API_KEY') }}"
+  - id: discord_bot_token
+    type: STRING
+    defaults: "{{ secret('DISCORD_BOT_TOKEN') }}"
+  - id: coral_mcp_url
+    type: STRING
+    defaults: "{{ kv('CORAL_MCP_URL') | default('http://host.docker.internal:8000/mcp') }}"
+
+tasks:
+  - id: gate
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ kv('TRIAGE_ENABLED') | default('true') }}"
+    cases:
+      "true":
+        - id: fetch_messages
+          type: io.kestra.plugin.core.http.Request
+          uri: "https://discord.com/api/v10/channels/{{ inputs.discord_thread_id }}/messages"
+          method: GET
+          headers:
+            Authorization: "Bot {{ inputs.discord_bot_token }}"
+          params:
+            limit: 100
+
+        - id: build_report
+          type: io.kestra.plugin.scripts.python.Script
+          dependencies:
+            - kestra
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          warningOnStdErr: false
+          script: |
+            import json
+            messages = json.loads('''{{ outputs.fetch_messages.body | toJson }}''')
+            thread_text = "\n".join([m.get("content", "") for m in reversed(messages)])
+            report = f"Title: {{ inputs.thread_name }}\nFirst message:\n{{ inputs.first_message }}\n\nThread:\n{thread_text}"
+            from kestra import Kestra
+            Kestra.outputs({"report": report})
+
+        - id: summarize
+          type: io.kestra.plugin.ai.completion.ChatCompletion
+          provider:
+            type: io.kestra.plugin.ai.provider.OpenAI
+            apiKey: "{{ inputs.openai_api_key }}"
+            modelName: minimax-m2.7
+            baseUrl: "{{ inputs.openai_base_url }}"
+          messages:
+            - type: SYSTEM
+              content: "Summarize this Discord bug report in 3-5 sentences. Focus on problem, impact, and reproduction steps."
+            - type: USER
+              content: "{{ outputs.build_report.vars.report }}"
+
+        - id: embed_and_search
+          type: io.kestra.plugin.scripts.python.Script
+          dependencies:
+            - openai
+            - qdrant-client
+            - kestra
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          warningOnStdErr: false
+          script: |
+            import json
+            from openai import OpenAI
+            from qdrant_client import QdrantClient
+            from kestra import Kestra
+
+            OPENAI_KEY = "{{ inputs.openai_api_key }}"
+            QDRANT_URL = "{{ inputs.qdrant_url }}"
+            QDRANT_KEY = "{{ inputs.qdrant_api_key }}"
+            SUMMARY = json.loads('''{{ outputs.summarize.textOutput | toJson }}''')
+            REPORT = json.loads('''{{ outputs.build_report.vars.report | toJson }}''')
+
+            openai = OpenAI(api_key=OPENAI_KEY)
+            qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_KEY)
+
+            embedding = openai.embeddings.create(input=[SUMMARY], model="text-embedding-3-small").data[0].embedding
+
+            top_issues = []
+            print("GitHub candidates:", json.dumps(top_issues))
+
+            candidates = []
+            mem_hits = qdrant.search(collection_name="discord_unmatched", query_vector=embedding, limit=10)
+            for h in mem_hits:
+                candidates.append({
+                    "id": str(h.id),
+                    "summary": h.payload.get("summary", ""),
+                    "score": h.score
+                })
+            print("Memory candidates:", json.dumps(candidates))
+
+            Kestra.outputs({
+                "top_issues": json.dumps(top_issues),
+                "candidates": json.dumps(candidates),
+                "summary": SUMMARY,
+                "report": REPORT,
+                "embedding": json.dumps(embedding)
+            })
+
+        - id: coral_search
+          type: io.kestra.plugin.ai.agent.AIAgent
+          systemMessage: |
+            You have access to Coral MCP. Use it to search GitHub issues.
+            Remember: github.search_issues is a table function with a required q argument.
+            Call it from FROM like:
+            SELECT title, html_url, state, number, score
+            FROM github.search_issues
+            WHERE q = 'repo:OWNER/REPO is:open is:issue KEYWORDS' AND mode = 'semantic'
+            Return ONLY a JSON array of objects with keys: number, title, url, score.
+            If no issues match, return an empty array [].
+          prompt: |
+            Find open issues in repo {{ inputs.default_repo }} that match this Discord bug report:
+            {{ outputs.embed_and_search.vars.summary }}
+
+            Use Coral MCP github.search_issues with semantic mode.
+            Return the results as a JSON array.
+          provider:
+            type: io.kestra.plugin.ai.provider.OpenAI
+            apiKey: "{{ secret('OPENAI_API_KEY') }}"
+            modelName: minimax-m2.7
+            baseUrl: "{{ inputs.openai_base_url }}"
+          tools:
+            - type: io.kestra.plugin.ai.tool.StreamableHttpMcpClient
+              url: "{{ inputs.coral_mcp_url }}"
+              logRequests: true
+              logResponses: true
+
+        - id: parse_coral
+          type: io.kestra.plugin.scripts.python.Script
+          dependencies:
+            - kestra
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          warningOnStdErr: false
+          script: |
+            import json, re
+            text = json.loads('''{{ outputs.coral_search.textOutput | toJson }}''')
+            top_issues = []
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    top_issues = parsed
+            except Exception:
+                match = re.search(r'\[.*\]', text, re.DOTALL)
+                if match:
+                    try:
+                        top_issues = json.loads(match.group())
+                    except Exception:
+                        pass
+            from kestra import Kestra
+            Kestra.outputs({"top_issues": json.dumps(top_issues)})
+
+        - id: judge_a
+          type: io.kestra.plugin.ai.completion.Classification
+          provider:
+            type: io.kestra.plugin.ai.provider.OpenAI
+            apiKey: "{{ secret('OPENAI_API_KEY') }}"
+            modelName: minimax-m2.7
+            baseUrl: "{{ inputs.openai_base_url }}"
+          classes:
+            - "MATCH"
+            - "NO_MATCH"
+          prompt: |
+            A new Discord report summary:
+            {{ outputs.embed_and_search.vars.summary }}
+
+            Top similar GitHub issues:
+            {{ outputs.parse_coral.vars.top_issues | default('[]') }}
+
+            Does the Discord report describe the SAME underlying issue as one of the GitHub issues?
+            Respond ONLY with MATCH or NO_MATCH.
+
+        - id: if_matched
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs.judge_a.classification == 'MATCH' }}"
+          then:
+            - id: emit_matched
+              type: io.kestra.plugin.scripts.python.Script
+              dependencies:
+                - kestra
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              warningOnStdErr: false
+              script: |
+                import json
+                issues = json.loads('''{{ outputs.parse_coral.vars.top_issues }}''')
+                from kestra import Kestra
+                Kestra.outputs({
+                  "outcome": "matched_github",
+                  "issue_number": str(issues[0]["number"]) if issues else "",
+                  "summary": json.loads('''{{ outputs.embed_and_search.vars.summary | toJson }}''')
+                })
+
+        - id: if_not_matched
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs.judge_a.classification != 'MATCH' }}"
+          then:
+            - id: judge_b
+              type: io.kestra.plugin.ai.completion.Classification
+              provider:
+                type: io.kestra.plugin.ai.provider.OpenAI
+                apiKey: "{{ inputs.openai_api_key }}"
+                modelName: minimax-m2.7
+                baseUrl: "{{ inputs.openai_base_url }}"
+              classes:
+                - "CLUSTER_EXISTING"
+                - "NEW_CLUSTER"
+              prompt: |
+                A new Discord report summary:
+                {{ outputs.embed_and_search.vars.summary }}
+
+                Most similar unmatched reports:
+                {{ outputs.embed_and_search.vars.candidates | default('[]') }}
+
+                Does the new report belong to the SAME cluster as one of the existing reports?
+                Respond ONLY with CLUSTER_EXISTING or NEW_CLUSTER.
+
+            - id: upsert_and_threshold
+              type: io.kestra.plugin.scripts.python.Script
+              dependencies:
+                - openai
+                - qdrant-client
+                - kestra
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              warningOnStdErr: false
+              script: |
+                import json, hashlib
+                from datetime import datetime, timezone
+                from qdrant_client import QdrantClient, models
+                from kestra import Kestra
+
+                QDRANT_URL = "{{ inputs.qdrant_url }}"
+                QDRANT_KEY = "{{ inputs.qdrant_api_key }}"
+                THREAD_ID = "{{ inputs.discord_thread_id }}"
+                THREAD_NAME = "{{ inputs.thread_name }}"
+                SUMMARY = json.loads('''{{ outputs.embed_and_search.vars.summary | toJson }}''')
+                REPORT = json.loads('''{{ outputs.embed_and_search.vars.report | toJson }}''')
+                EMBEDDING = json.loads('''{{ outputs.embed_and_search.vars.embedding }}''')
+                judge_b_result = '''{{ outputs.judge_b.classification }}'''
+
+                candidates = json.loads('''{{ outputs.embed_and_search.vars.candidates }}''')
+                CLUSTER_ID = candidates[0]["id"] if judge_b_result == "CLUSTER_EXISTING" and candidates else None
+
+                qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_KEY)
+
+                point_id = hashlib.md5(THREAD_ID.encode()).hexdigest()
+                qdrant.upsert(
+                    collection_name="discord_unmatched",
+                    points=[models.PointStruct(
+                        id=point_id,
+                        vector=EMBEDDING,
+                        payload={
+                            "thread_id": THREAD_ID,
+                            "thread_name": THREAD_NAME,
+                            "summary": SUMMARY,
+                            "full_text": REPORT,
+                            "channel_id": "{{ inputs.discord_channel_id }}",
+                            "guild_id": "{{ inputs.discord_guild_id }}",
+                            "parent_channel_id": "{{ inputs.parent_channel_id }}",
+                            "cluster_id": CLUSTER_ID,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )]
+                )
+                print(f"Upserted point {point_id}")
+
+                threshold_hit = False
+                if CLUSTER_ID:
+                    count_filter = models.Filter(
+                        must=[models.FieldCondition(key="cluster_id", match=models.MatchValue(value=CLUSTER_ID))]
+                    )
+                    total = qdrant.count(collection_name="discord_unmatched", count_filter=count_filter).count
+                    print(f"Cluster {CLUSTER_ID} count: {total}")
+                    if total >= 3:
+                        print("THRESHOLD_HIT")
+                        threshold_hit = True
+                    else:
+                        print("THRESHOLD_NOT_HIT")
+                else:
+                    print("THRESHOLD_NOT_HIT")
+
+                Kestra.outputs({
+                    "outcome": "stored_memory",
+                    "cluster_id": CLUSTER_ID,
+                    "summary": SUMMARY,
+                    "threshold_hit": threshold_hit,
+                    "point_id": point_id,
+                })
+
+      defaults:
+        - id: skip
+          type: io.kestra.plugin.core.log.Log
+          message: "Triage disabled via KV store (TRIAGE_ENABLED != true)"
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: 3Kua0DFmXL
+    inputs:
+      discord_thread_id: "{{ trigger.body.discord_thread_id }}"
+      discord_channel_id: "{{ trigger.body.discord_channel_id }}"
+      discord_guild_id: "{{ trigger.body.discord_guild_id }}"
+      thread_name: "{{ trigger.body.thread_name }}"
+      parent_channel_id: "{{ trigger.body.parent_channel_id }}"
+      first_message: "{{ trigger.body.first_message }}"
+
+timeout: PT5M
+concurrency:
+  behavior: QUEUE
+  limit: 1
