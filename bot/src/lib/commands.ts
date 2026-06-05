@@ -3,10 +3,13 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
   ActionRowBuilder,
+  MessageFlags,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
+
+const EPH = { flags: MessageFlags.Ephemeral } as const;
 import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
 import { getForumChannelId, setForumChannelId } from "./store.js";
@@ -37,13 +40,27 @@ async function postConfig(
   key: string,
   value: string
 ): Promise<boolean> {
-  const res = await fetch(webhookUrl(env, "config"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ guild_id: guildId, key, value }),
-  });
-  if (!res.ok) console.error(`Config write failed [${key}]:`, res.status, await res.text());
-  return res.ok;
+  const url = webhookUrl(env, "config");
+  const body = { guild_id: guildId, key, value: value.slice(0, 8) + "***" };
+  console.log(`[postConfig] POST ${url}`);
+  console.log(`[postConfig] body: ${JSON.stringify(body)}`);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guild_id: guildId, key, value }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      console.error(`[postConfig] FAILED [${key}] status=${res.status} body=${text}`);
+    } else {
+      console.log(`[postConfig] OK [${key}] status=${res.status} body=${text}`);
+    }
+    return res.ok;
+  } catch (err) {
+    console.error(`[postConfig] EXCEPTION [${key}]:`, err);
+    return false;
+  }
 }
 
 export async function handleCommand(
@@ -51,6 +68,7 @@ export async function handleCommand(
   env: BotEnv
 ): Promise<void> {
   const guildId = interaction.guildId ?? "unknown";
+  console.log(`[cmd] /${interaction.commandName} guild=${guildId} user=${interaction.user.id}`);
 
   switch (interaction.commandName) {
     case "setup":
@@ -77,7 +95,7 @@ export async function handleCommand(
       const url = interaction.options.getString("url");
       if (url) {
         const ok = await postConfig(env, guildId, "OPENAI_BASE_URL", url);
-        await interaction.reply({ content: ok ? "Base URL saved." : "Failed to save.", ephemeral: true });
+        await interaction.reply({ content: ok ? "Base URL saved." : "Failed to save.", ...EPH });
       } else {
         await interaction.showModal(
           modal("set_baseurl_modal", "Set OpenAI Base URL", [
@@ -92,7 +110,7 @@ export async function handleCommand(
       const repo = interaction.options.getString("repo");
       if (repo) {
         const ok = await postConfig(env, guildId, "DEFAULT_REPO", repo);
-        await interaction.reply({ content: ok ? "Repo saved." : "Failed to save.", ephemeral: true });
+        await interaction.reply({ content: ok ? "Repo saved." : "Failed to save.", ...EPH });
       } else {
         await interaction.showModal(
           modal("set_repo_modal", "Set Default Repo", [
@@ -108,7 +126,7 @@ export async function handleCommand(
       setForumChannelId(guildId, channel.id);
       await interaction.reply({
         content: `Forum channel set to <#${channel.id}> (\`${channel.id}\`).`,
-        ephemeral: true,
+        ...EPH,
       });
       break;
     }
@@ -118,12 +136,12 @@ export async function handleCommand(
       const content = forumChannelId
         ? `✅ Monitoring <#${forumChannelId}> (\`${forumChannelId}\`)`
         : "⚠️ No forum channel set. Run /set-forum-channel.";
-      await interaction.reply({ content, ephemeral: true });
+      await interaction.reply({ content, ...EPH });
       break;
     }
 
     default:
-      await interaction.reply({ content: "Unknown command.", ephemeral: true });
+      await interaction.reply({ content: "Unknown command.", ...EPH });
   }
 }
 
@@ -132,6 +150,7 @@ export async function handleModal(
   env: BotEnv
 ): Promise<void> {
   const guildId = interaction.guildId ?? "unknown";
+  console.log(`[modal] ${interaction.customId} guild=${guildId} user=${interaction.user.id}`);
   const get = (id: string) => interaction.fields.getTextInputValue(id);
 
   switch (interaction.customId) {
@@ -146,27 +165,29 @@ export async function handleModal(
       const ok = results.every(Boolean);
       await interaction.reply({
         content: ok ? "✅ Setup complete." : "⚠️ Some values failed to save. Check logs.",
-        ephemeral: true,
+        ...EPH,
       });
       break;
     }
     case "set_api_key_modal": {
+      console.log(`[modal] set_api_key_modal: sending to Kestra config webhook`);
       const ok = await postConfig(env, guildId, "OPENAI_API_KEY", get("api_key"));
-      await interaction.reply({ content: ok ? "API key saved." : "Failed.", ephemeral: true });
+      console.log(`[modal] set_api_key_modal: result=${ok}`);
+      await interaction.reply({ content: ok ? "API key saved." : "Failed — check bot logs.", ...EPH });
       break;
     }
     case "set_baseurl_modal": {
       const ok = await postConfig(env, guildId, "OPENAI_BASE_URL", get("base_url"));
-      await interaction.reply({ content: ok ? "Base URL saved." : "Failed.", ephemeral: true });
+      await interaction.reply({ content: ok ? "Base URL saved." : "Failed.", ...EPH });
       break;
     }
     case "set_repo_modal": {
       const ok = await postConfig(env, guildId, "DEFAULT_REPO", get("repo"));
-      await interaction.reply({ content: ok ? "Repo saved." : "Failed.", ephemeral: true });
+      await interaction.reply({ content: ok ? "Repo saved." : "Failed.", ...EPH });
       break;
     }
     default:
-      await interaction.reply({ content: "Unknown modal.", ephemeral: true });
+      await interaction.reply({ content: "Unknown modal.", ...EPH });
   }
 }
 
@@ -193,14 +214,14 @@ export async function handleButton(
       }),
     }).catch((err) => console.error("Kestra approve failed:", err));
 
-    await interaction.reply({ content: "Approval sent to Kestra.", ephemeral: true });
+    await interaction.reply({ content: "Approval sent to Kestra.", ...EPH });
     return;
   }
 
   if (customId.startsWith("reject_issue:")) {
-    await interaction.reply({ content: "Issue rejected.", ephemeral: true });
+    await interaction.reply({ content: "Issue rejected.", ...EPH });
     return;
   }
 
-  await interaction.reply({ content: "Unknown button.", ephemeral: true });
+  await interaction.reply({ content: "Unknown button.", ...EPH });
 }
