@@ -20,15 +20,35 @@ import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
 import { getForumChannelId, setForumChannelId } from "./store.js";
 
+export function welcomeEmbed() {
+  return new EmbedBuilder()
+    .setTitle("👋 Thanks for adding Triage Bot!")
+    .setColor(0x5865f2)
+    .setDescription(
+      "I automatically triage new forum posts — finding matching GitHub issues or duplicates — and escalate confirmed bugs to GitHub.\n\nFollow these steps to get started:"
+    )
+    .addFields(
+      { name: "Step 1 — Set your forum channel", value: "Run `/setup` → click **Forum Channel** and pick the forum to monitor.", inline: false },
+      { name: "Step 2 — Add your Gemini API key", value: "Run `/setup` → click **AI Provider** → enter your Gemini API key (`AIzaSy...`).", inline: false },
+      { name: "Step 3 — Link your GitHub repo", value: "Run `/setup` → click **GitHub** → enter your repo (`owner/repo`) and a GitHub token with `issues:write`.", inline: false },
+      { name: "Step 4 — Done!", value: "Post something in your forum channel and watch me triage it. Run `/status` anytime to confirm the channel is set.", inline: false },
+      { name: "Need help?", value: "Run `/help` for a full command reference.", inline: false },
+    )
+    .setFooter({ text: "All credentials are stored securely in Kestra KV — never logged." });
+}
+
 function setupPanelData(guildId: string) {
   const forumId = getForumChannelId(guildId);
   const embed = new EmbedBuilder()
     .setTitle("⚙️ Bot Configuration")
-    .addFields({
-      name: "Forum Channel",
-      value: forumId ? `<#${forumId}> (\`${forumId}\`)` : "❌ Not set — click **Forum Channel** below",
-      inline: false,
-    })
+    .addFields(
+      {
+        name: "Forum Channel",
+        value: forumId ? `<#${forumId}> (\`${forumId}\`)` : "❌ Not set — click **Forum Channel** below",
+        inline: false,
+      },
+      { name: "Gemini API Key", value: "Set via **AI Provider** button", inline: false }
+    )
     .setColor(forumId ? 0x57f287 : 0xfee75c)
     .setFooter({ text: "AI & GitHub credentials are stored securely in Kestra KV." });
 
@@ -48,8 +68,8 @@ function helpEmbed() {
     .addFields(
       { name: "/setup", value: "Open the configuration panel (AI provider, GitHub, forum channel)", inline: false },
       { name: "/repo [owner/repo]", value: "Set the default GitHub repository for issue filing", inline: false },
-      { name: "/set-api-key", value: "Quickly update the OpenAI API key", inline: false },
-      { name: "/set-baseurl [url]", value: "Update the OpenAI-compatible base URL", inline: false },
+      { name: "/set-api-key", value: "Quickly update the Gemini API key", inline: false },
+      { name: "/set-baseurl [url]", value: "Update the OpenAI-compatible base URL (optional, for custom endpoints)", inline: false },
       { name: "/set-forum-channel #channel", value: "Set the forum channel to monitor for new posts", inline: false },
       { name: "/status", value: "Show the currently monitored forum channel", inline: false },
       { name: "/help", value: "Show this message", inline: false },
@@ -89,12 +109,12 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
       break;
 
     case "set-api-key": {
-      const m = new ModalBuilder().setCustomId("api_key_modal").setTitle("Update API Key");
+      const m = new ModalBuilder().setCustomId("api_key_modal").setTitle("Update Gemini API Key");
       m.addComponents(
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
-            .setCustomId("api_key").setLabel("OpenAI API Key")
-            .setStyle(TextInputStyle.Short).setPlaceholder("sk-...")
+            .setCustomId("api_key").setLabel("Gemini API Key")
+            .setStyle(TextInputStyle.Short).setPlaceholder("AIzaSy...")
             .setRequired(true).setMaxLength(500),
         ),
       );
@@ -177,14 +197,8 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
     m.addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
-          .setCustomId("api_key").setLabel("OpenAI API Key")
-          .setStyle(TextInputStyle.Short).setPlaceholder("sk-...")
-          .setRequired(true).setMaxLength(500),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("base_url").setLabel("Base URL")
-          .setStyle(TextInputStyle.Short).setPlaceholder("https://api.openai.com/v1")
+          .setCustomId("api_key").setLabel("Gemini API Key")
+          .setStyle(TextInputStyle.Short).setPlaceholder("AIzaSy...")
           .setRequired(true).setMaxLength(500),
       ),
     );
@@ -281,12 +295,8 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
 
   switch (interaction.customId) {
     case "setup_ai_modal": {
-      const results = await Promise.all([
-        postConfig(env, guildId, "OPENAI_API_KEY", get("api_key")),
-        postConfig(env, guildId, "OPENAI_BASE_URL", get("base_url")),
-      ]);
-      const ok = results.every(Boolean);
-      await interaction.reply({ content: ok ? "✅ AI provider configured." : "⚠️ Some values failed — check bot logs.", ...EPH });
+      const ok = await postConfig(env, guildId, "GEMINI_API_KEY", get("api_key"));
+      await interaction.reply({ content: ok ? "✅ Gemini API key configured." : "⚠️ Failed to save — check bot logs.", ...EPH });
       break;
     }
 
@@ -302,8 +312,8 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
     }
 
     case "api_key_modal": {
-      const ok = await postConfig(env, guildId, "OPENAI_API_KEY", get("api_key"));
-      await interaction.reply({ content: ok ? "✅ API key saved." : "⚠️ Failed — check bot logs.", ...EPH });
+      const ok = await postConfig(env, guildId, "GEMINI_API_KEY", get("api_key"));
+      await interaction.reply({ content: ok ? "✅ Gemini API key saved." : "⚠️ Failed — check bot logs.", ...EPH });
       break;
     }
 

@@ -1,376 +1,216 @@
 id: triage_draft_alert
 namespace: discord.triage
 description: >
-  Triggered when a cluster reaches the ≥3 report threshold or when a
-  human approves/rejects a draft via Discord. In auto mode it drafts
-  an aggregated GitHub issue and posts it to the admin channel.
-  In approval mode it creates the real GitHub issue.
+  Handles ➕ reaction confirmations on unknown-issue posts.
+  Uses Discord's reaction count (relayed by bot) to avoid double-counting.
+  Auto-creates GitHub issue when reaction_count ≥ 3; marks thread as escalated
+  in KV to prevent duplicate issues. Webhook key must match KESTRA_ALERT_WEBHOOK_KEY
+  in bot environment (default key: AlertKey9x2).
 
 inputs:
-  - id: action
+  - id: channel_id
     type: STRING
-    defaults: "{{ trigger.body.action ?? 'draft' }}"
-  - id: cluster_id
-    type: STRING
-    defaults: "{{ trigger.body.cluster_id ?? '' }}"
-  - id: issue_key
-    type: STRING
-    defaults: "{{ trigger.body.issue_key ?? '' }}"
-  - id: message_id
-    type: STRING
-    defaults: "{{ trigger.body.message_id ?? '' }}"
-  - id: approver_id
-    type: STRING
-    defaults: "{{ trigger.body.approver_id ?? '' }}"
-  - id: approver_name
-    type: STRING
-    defaults: "{{ trigger.body.approver_name ?? '' }}"
-  - id: interaction_token
-    type: STRING
-    defaults: "{{ trigger.body.interaction_token ?? '' }}"
-
+    defaults: "{{ trigger.body.channel_id }}"
   - id: guild_id
     type: STRING
-    defaults: "{{ trigger.body.guild_id ?? '' }}"
-
-  - id: openai_api_key
+    defaults: "{{ trigger.body.guild_id }}"
+  - id: reaction_count
     type: STRING
-    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_OPENAI_API_KEY') }}"
-  - id: openai_base_url
-    type: STRING
-    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_OPENAI_BASE_URL') | default('https://llm.kimchi.dev/openai/v1') }}"
-  - id: admin_channel_id
-    type: STRING
-    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_ADMIN_CHANNEL_ID') }}"
-  - id: github_token
-    type: STRING
-    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_GITHUB_TOKEN') }}"
-  - id: github_repo
-    type: STRING
-    defaults: "{{ kv('GUILD_' ~ trigger.body.guild_id ~ '_DEFAULT_REPO') }}"
-  - id: qdrant_url
-    type: STRING
-    defaults: "{{ kv('QDRANT_URL') }}"
-  - id: qdrant_api_key
-    type: STRING
-    defaults: "{{ secret('QDRANT_API_KEY') }}"
-  - id: discord_bot_token
-    type: STRING
-    defaults: "{{ secret('DISCORD_BOT_TOKEN') }}"
+    defaults: "{{ trigger.body.reaction_count ?? '1' }}"
 
 tasks:
-  - id: route
-    type: io.kestra.plugin.core.flow.Switch
-    value: "{{ inputs.action }}"
-    cases:
-      "draft":
-        - id: check_cluster_id
-          type: io.kestra.plugin.core.flow.If
-          condition: "{{ inputs.cluster_id is empty }}"
-          then:
-            - id: log_skip_empty
-              type: io.kestra.plugin.core.log.Log
-              message: "No cluster_id provided, skipping"
-          else:
-            - id: fetch_cluster
-              type: io.kestra.plugin.core.http.Request
-              uri: "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/scroll"
-              method: POST
-              contentType: application/json
-              headers:
-                api-key: "{{ inputs.qdrant_api_key }}"
-              body: |
-                {{ {
-                  "filter": {
-                    "must": [
-                      {
-                        "key": "cluster_id",
-                        "match": {
-                          "value": inputs.cluster_id
-                        }
-                      }
-                    ]
-                  },
-                  "limit": 100,
-                  "with_payload": true
-                } | toJson }}
+  - id: read_triage
+    type: io.kestra.plugin.core.kv.Get
+    key: "GUILD_{{ inputs.guild_id }}_THREAD_{{ inputs.channel_id }}_TRIAGE"
+    errorOnMissing: false
 
-            - id: check_empty
-              type: io.kestra.plugin.core.flow.If
-              condition: "{{ outputs.fetch_cluster.body.result.points is empty }}"
-              then:
-                - id: log_no_points
-                  type: io.kestra.plugin.core.log.Log
-                  message: "No points found for cluster {{ inputs.cluster_id }}"
-              else:
-                - id: extract_data
-                  type: io.kestra.plugin.scripts.python.Script
-                  dependencies:
-                    - kestra
-                  taskRunner:
-                    type: io.kestra.plugin.core.runner.Process
-                  containerImage: python:3.13-slim
-                  warningOnStdErr: false
-                  script: |
-                    import json
-                    points = json.loads("""{{ outputs.fetch_cluster.body | toJson }}""")["result"]["points"]
-                    summaries = [p["payload"]["summary"] for p in points]
-                    combined = "\n---\n".join(summaries)
-                    from kestra import Kestra
-                    Kestra.outputs({
-                      "summaries_count": len(summaries),
-                      "combined": combined,
-                      "point_ids": [p["id"] for p in points]
-                    })
+  - id: check_eligibility
+    type: io.kestra.plugin.scripts.python.Script
+    dependencies:
+      - kestra
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    warningOnStdErr: false
+    script: |
+      import json
+      from kestra import Kestra
 
-                - id: draft_issue
-                  type: io.kestra.plugin.ai.completion.ChatCompletion
-                  provider:
-                    type: io.kestra.plugin.ai.provider.OpenAI
-                    apiKey: "{{ inputs.openai_api_key }}"
-                    modelName: gpt-4o
-                    baseUrl: "{{ inputs.openai_base_url }}"
-                  messages:
-                    - type: SYSTEM
-                      content: "You are a senior engineer drafting a GitHub issue from multiple related Discord bug reports. Produce a concise title and detailed body."
-                    - type: USER
-                      content: |
-                        Here are {{ outputs.extract_data.vars.summaries_count }} related reports:
-                        {{ outputs.extract_data.vars.combined }}
+      raw = """{{ outputs.read_triage.value | default('') }}"""
+      count = int("{{ inputs.reaction_count }}")
 
-                        Draft a single GitHub issue title and body that captures the core problem, impact, and any reproduction steps.
+      data = None
+      if raw.strip() and raw.strip() not in ('null', 'None', '""', "''"):
+          try:
+              data = json.loads(raw.strip())
+          except Exception:
+              pass
 
-                - id: parse_draft
-                  type: io.kestra.plugin.scripts.python.Script
-                  dependencies:
-                    - kestra
-                  taskRunner:
-                    type: io.kestra.plugin.core.runner.Process
-                  containerImage: python:3.13-slim
-                  warningOnStdErr: false
-                  script: |
-                    draft_text = """{{ outputs.draft_issue.textOutput }}"""
-                    lines = draft_text.splitlines()
-                    title = lines[0].lstrip("# ").strip()
-                    body = "\n".join(lines[1:]).strip()
-                    from kestra import Kestra
-                    Kestra.outputs({"title": title, "body": body[:4096]})
+      # Only escalate: thread was triaged as no_match, not yet escalated, count >= 3
+      if data and data.get("status") == "no_match" and count >= 3:
+          author_id = data.get("author_id", "")
+          Kestra.outputs({"should_escalate": "true", "author_id": author_id})
+      else:
+          Kestra.outputs({"should_escalate": "false", "author_id": ""})
 
-                - id: send_alert
-                  type: io.kestra.plugin.core.http.Request
-                  uri: "https://discord.com/api/v10/channels/{{ inputs.admin_channel_id }}/messages"
-                  method: POST
-                  contentType: application/json
-                  headers:
-                    Authorization: "Bot {{ inputs.discord_bot_token }}"
-                  body: |
-                    {{ {
-                      "content": '📋 Draft issue ready for cluster `' ~ inputs.cluster_id ~ '`',
-                      "embeds": [
-                        {
-                          "title": outputs.parse_draft.vars.title,
-                          "description": outputs.parse_draft.vars.body,
-                          "footer": {
-                            "text": "Reports: " ~ outputs.extract_data.vars.summaries_count ~ " | Cluster: " ~ inputs.cluster_id
-                          }
-                        }
-                      ],
-                      "components": [
-                        {
-                          "type": 1,
-                          "components": [
-                            {"type": 2, "style": 3, "label": "✅ Approve", "custom_id": "approve_issue:" ~ inputs.cluster_id},
-                            {"type": 2, "style": 4, "label": "❌ Reject", "custom_id": "reject_issue:" ~ inputs.cluster_id}
-                          ]
-                        }
-                      ]
-                    } | toJson }}
+  - id: log_eligibility
+    type: io.kestra.plugin.core.log.Log
+    level: INFO
+    message: |
+      [check_eligibility] should_escalate={{ outputs.check_eligibility.vars.should_escalate }}
+      channel={{ inputs.channel_id }} reaction_count={{ inputs.reaction_count }}
+      triage_kv={{ outputs.read_triage.value | default('(not set)') }}
 
-                - id: update_qdrant
-                  type: io.kestra.plugin.scripts.python.Script
-                  dependencies:
-                    - requests
-                  taskRunner:
-                    type: io.kestra.plugin.core.runner.Process
-                  containerImage: python:3.13-slim
-                  warningOnStdErr: false
-                  script: |
-                    import requests
-                    url = "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/payload"
-                    headers = {"api-key": "{{ inputs.qdrant_api_key }}", "Content-Type": "application/json"}
-                    payload = {
-                      "payload": {
-                        "alert_sent": True,
-                        "draft_title": "{{ outputs.parse_draft.vars.title }}",
-                        "draft_body": "{{ outputs.parse_draft.vars.body }}"
-                      },
-                      "points": {{ outputs.extract_data.vars.point_ids | toJson }}
-                    }
-                    r = requests.post(url, headers=headers, json=payload)
-                    r.raise_for_status()
-                    print("Updated Qdrant with alert_sent=true")
+  - id: if_should_escalate
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.check_eligibility.vars.should_escalate == 'true' }}"
+    then:
+      # Claim the escalation slot first to prevent duplicate issues under QUEUE concurrency
+      - id: claim_escalation
+        type: io.kestra.plugin.core.kv.Set
+        key: "GUILD_{{ inputs.guild_id }}_THREAD_{{ inputs.channel_id }}_TRIAGE"
+        value: "{\"status\": \"escalated\"}"
+        overwrite: true
 
-      "approve":
-        - id: check_issue_key
-          type: io.kestra.plugin.core.flow.If
-          condition: "{{ inputs.issue_key is empty }}"
-          then:
-            - id: log_skip_approve
-              type: io.kestra.plugin.core.log.Log
-              message: "No issue_key provided, skipping"
-          else:
-            - id: fetch_draft
-              type: io.kestra.plugin.core.http.Request
-              uri: "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/scroll"
-              method: POST
-              contentType: application/json
-              headers:
-                api-key: "{{ inputs.qdrant_api_key }}"
-              body: |
-                {{ {
-                  "filter": {
-                    "must": [
-                      {
-                        "key": "cluster_id",
-                        "match": {
-                          "value": inputs.issue_key
-                        }
-                      }
-                    ]
-                  },
-                  "limit": 1,
-                  "with_payload": true
-                } | toJson }}
+      - id: draft_issue_agent
+        type: io.kestra.plugin.ai.agent.AIAgent
+        systemMessage: |-
+          You are a technical writer drafting a GitHub issue from a Discord bug report thread.
 
-            - id: check_not_found
-              type: io.kestra.plugin.core.flow.If
-              condition: "{{ outputs.fetch_draft.body.result.points is empty }}"
-              then:
-                - id: log_not_found
-                  type: io.kestra.plugin.core.log.Log
-                  message: "Cluster not found for key {{ inputs.issue_key }}"
-              else:
-                - id: create_github_issue
-                  type: io.kestra.plugin.github.issues.Create
-                  oauthToken: "{{ inputs.github_token }}"
-                  repository: "{{ inputs.github_repo }}"
-                  title: "{{ outputs.fetch_draft.body.result.points[0].payload.draft_title | default('Aggregated issue') }}"
-                  body: |
-                    {{ outputs.fetch_draft.body.result.points[0].payload.draft_body | default('') }}
+          MANDATE — You MUST use the `sql` tool to read Discord messages before drafting the issue. NEVER write an issue without first executing at least one SQL query via the `sql` tool. You have zero knowledge of thread contents without querying them. Do not guess, fabricate, or assume.
 
-                    _approved by {{ inputs.approver_name }}_
+          You have access to Coral MCP with Discord access. Read the thread messages using:
 
-                - id: mark_created
-                  type: io.kestra.plugin.scripts.python.Script
-                  dependencies:
-                    - requests
-                  taskRunner:
-                    type: io.kestra.plugin.core.runner.Process
-                  containerImage: python:3.13-slim
-                  warningOnStdErr: false
-                  script: |
-                    import requests
-                    url = "{{ inputs.qdrant_url }}/collections/discord_unmatched/points/payload"
-                    headers = {"api-key": "{{ inputs.qdrant_api_key }}", "Content-Type": "application/json"}
-                    payload = {
-                      "payload": {
-                        "github_issue_number": {{ outputs.create_github_issue.issueNumber }},
-                        "github_issue_url": "{{ outputs.create_github_issue.issueUrl }}",
-                        "status": "created"
-                      },
-                      "points": [{{ outputs.fetch_draft.body.result.points[0].id }}]
-                    }
-                    r = requests.post(url, headers=headers, json=payload)
-                    r.raise_for_status()
-                    print("Marked cluster as created")
+            SELECT content, author__username, timestamp, permalink
+            FROM discord.messages
+            WHERE channel_id = 'THREAD_ID'
+            LIMIT 20
 
-      "approve_by_reaction":
-        - id: check_message_id
-          type: io.kestra.plugin.core.flow.If
-          condition: "{{ inputs.message_id is empty }}"
-          then:
-            - id: log_skip_reaction
-              type: io.kestra.plugin.core.log.Log
-              message: "No message_id provided, skipping"
-          else:
-            - id: find_by_message
-              type: io.kestra.plugin.core.http.Request
-              uri: "{{ inputs.qdrant_url }}/collections/pending_issues/points/scroll"
-              method: POST
-              contentType: application/json
-              headers:
-                api-key: "{{ inputs.qdrant_api_key }}"
-              body: |
-                {{ {
-                  "filter": {
-                    "must": [
-                      {
-                        "key": "discord_message_id",
-                        "match": {
-                          "value": inputs.message_id
-                        }
-                      }
-                    ]
-                  },
-                  "limit": 1,
-                  "with_payload": true
-                } | toJson }}
+          Then synthesize the reports into a well-structured GitHub issue.
 
-            - id: check_not_found_reaction
-              type: io.kestra.plugin.core.flow.If
-              condition: "{{ outputs.find_by_message.body.result.points is empty }}"
-              then:
-                - id: log_not_found_reaction
-                  type: io.kestra.plugin.core.log.Log
-                  message: "Pending issue not found for message {{ inputs.message_id }}"
-              else:
-                - id: create_github_issue_reaction
-                  type: io.kestra.plugin.github.issues.Create
-                  oauthToken: "{{ inputs.github_token }}"
-                  repository: "{{ inputs.github_repo }}"
-                  title: "{{ outputs.find_by_message.body.result.points[0].payload.draft_title | default('Aggregated issue') }}"
-                  body: |
-                    {{ outputs.find_by_message.body.result.points[0].payload.draft_body | default('') }}
+          Write a well-structured GitHub issue with:
+          - title: concise, specific, max 100 chars, no emoji
+          - body sections: Description, Steps to Reproduce, Impact, Discord Thread (with permalink)
 
-                    _approved by {{ inputs.approver_name }}_
+          RULES:
+          - You MUST execute at least one `sql` tool call before producing any answer.
+          - Title must be specific and actionable. Avoid vague phrases like "something is broken".
+          - Include the Discord thread permalink in the Discord Thread section.
+          - Do NOT discover tables. Use the SQL pattern above directly.
+        prompt: |-
+          Read and synthesize the Discord thread into a GitHub issue.
 
-                - id: delete_message
-                  type: io.kestra.plugin.core.http.Request
-                  uri: "https://discord.com/api/v10/channels/{{ inputs.admin_channel_id }}/messages/{{ inputs.message_id }}"
-                  method: DELETE
-                  headers:
-                    Authorization: "Bot {{ inputs.discord_bot_token }}"
+          Thread channel_id: {{ inputs.channel_id }}
+          Guild: {{ inputs.guild_id }}
+          Confirmed by {{ inputs.reaction_count }} users via ➕ reactions.
+        provider:
+          type: io.kestra.plugin.ai.provider.GoogleGemini
+          apiKey: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GEMINI_API_KEY') }}"
+          modelName: gemini-3.5-flash
+        tools:
+          - type: io.kestra.plugin.ai.tool.Skill
+            skills:
+              - name: coral
+                description: Query live sources through Coral MCP. Use when the task needs GitHub, Jira, Slack, Linear, Datadog, Sentry, files, or connected data.
+                content: |
+                  # Coral
 
-                - id: mark_created_reaction
-                  type: io.kestra.plugin.scripts.python.Script
-                  dependencies:
-                    - requests
-                  taskRunner:
-                    type: io.kestra.plugin.core.runner.Process
-                  containerImage: python:3.13-slim
-                  warningOnStdErr: false
-                  script: |
-                    import requests
-                    url = "{{ inputs.qdrant_url }}/collections/pending_issues/points/payload"
-                    headers = {"api-key": "{{ inputs.qdrant_api_key }}", "Content-Type": "application/json"}
-                    payload = {
-                      "payload": {
-                        "github_issue_number": {{ outputs.create_github_issue_reaction.issueNumber }},
-                        "github_issue_url": "{{ outputs.create_github_issue_reaction.issueUrl }}",
-                        "status": "created"
-                      },
-                      "points": [{{ outputs.find_by_message.body.result.points[0].id }}]
-                    }
-                    r = requests.post(url, headers=headers, json=payload)
-                    r.raise_for_status()
-                    print("Pending issue marked as created")
+                  ## Overview
+
+                  Use this as the Coral entrypoint for external context. Query Coral before answering from assumptions or changing code when live external state matters.
+
+                  - Use Coral MCP tools/resources for discovery and query.
+                  - Do not use the `coral` CLI, compile Coral, copy binaries, or bootstrap a server unless explicitly asked.
+                  - Do not switch to vendor tools for the same read unless the user asks to continue without Coral or Coral does not cover the source.
+
+                  ## Support Checks
+
+                  - Confirm Coral MCP tools/resources before making external-system claims.
+                  - If Coral MCP is unavailable, state the blocker and stop; no local recovery.
+                  - Distinguish missing source config, missing credentials, query errors, and empty results.
+                  - If scope is missing, inspect guidance first, then ask for the smallest missing identifier.
+
+                  ## Workflow
+
+                  1. Identify the needed source, entity, and scope from the user request.
+                  2. Discover tables and table functions with `list_catalog` or `search_catalog`; page large catalogs and narrow by schema or kind when useful.
+                  3. Read `list_catalog` or `search_catalog` for `sql_reference`, `sql_call_example`, and `required_filters`; use `coral://guide` for query patterns and `coral://tables` for table summaries.
+                  4. Inspect `coral.columns` for table columns, required filters, virtual columns, and descriptions.
+                  5. Inspect `coral.table_functions` for source-scoped function arguments and result columns.
+                  6. Inspect `coral.inputs` when source configuration affects the answer.
+                  7. Query with `sql`: select useful columns, include required filters or function arguments, and add `LIMIT` unless complete output is requested.
+                  8. Summarize evidence, gaps, and next action. If editing code, use the Coral result to guide changes.
+
+                  ## Query Rules
+
+                  - Use each table's `sql_reference`; write `github.pulls` or `"github"."pulls"`, not `"github.pulls"`.
+                  - Use each table function's `sql_call_example`, filling in required arguments before querying it.
+                  - Keep metadata discovery bounded: page catalog discovery, query `coral.columns` for one table or `coral.table_functions` for one source when possible, and add `LIMIT` when reading broad metadata directly.
+                  - Virtual columns are filter-only and return `NULL`; check `is_virtual`.
+                  - Required filters must appear in `WHERE`; inspect `required_filters` and `is_required_filter`.
+                  - Secret inputs always return `value = NULL`; use `is_set`.
+                  - Cross-source joins work and execute locally after source scans complete.
+                  - Keep answers compact: name the source, table, required filters, and query shape. Avoid exhaustive column dumps unless requested.
+                  - Lead with the answer or blocker. Include SQL only when it helps the user trust or reuse the result.
+
+                  ## Boundaries
+
+                  - Manifest fallback is only by request; inspect the smallest relevant sections and summarize table/filter shape.
+                  - Do not paste large manifest excerpts, present source-wide conclusions without query coverage, or treat query failures as empty results.
+          - type: io.kestra.plugin.ai.tool.StdioMcpClient
+            command: ["/root/coral", "mcp-stdio"]
+            logEvents: true
+        maxSequentialToolsInvocations: 6
+
+      - id: parse_draft
+        type: io.kestra.plugin.ai.completion.JSONStructuredExtraction
+        schemaName: GitHubIssue
+        jsonFields:
+          - title
+          - body
+        prompt: "{{ outputs.draft_issue_agent.textOutput }}"
+        provider:
+          type: io.kestra.plugin.ai.provider.GoogleGemini
+          apiKey: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GEMINI_API_KEY') }}"
+          modelName: gemini-3.1-flash-lite
+
+      - id: log_draft_result
+        type: io.kestra.plugin.core.log.Log
+        level: INFO
+        message: |
+          [draft_issue_agent] title={{ fromJson(outputs.parse_draft.extractedJson).title }}
+          channel={{ inputs.channel_id }} reaction_count={{ inputs.reaction_count }}
+
+      - id: create_github_issue
+        type: io.kestra.plugin.github.issues.Create
+        oauthToken: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GITHUB_TOKEN') }}"
+        repository: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_DEFAULT_REPO') }}"
+        title: "{{ fromJson(outputs.parse_draft.extractedJson).title }}"
+        body: "{{ fromJson(outputs.parse_draft.extractedJson).body }}"
+        labels:
+          - bug
+          - from-discord
+
+      - id: reply_with_issue_link
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://discord.com/api/v10/channels/{{ inputs.channel_id }}/messages"
+        method: POST
+        contentType: application/json
+        headers:
+          Authorization: "Bot {{ kv('DISCORD_BOT_TOKEN') }}"
+        body: |
+          {"content": {{ (("<@" ~ outputs.check_eligibility.vars.author_id ~ "> " if outputs.check_eligibility.vars.author_id != "" else "") ~ "🎉 Confirmed by " ~ inputs.reaction_count ~ " users — filed on GitHub: **[" ~ fromJson(outputs.parse_draft.extractedJson).title ~ "](" ~ outputs.create_github_issue.issueUrl ~ ")**") | toJson }}}
+        options:
+          allowFailed: true
 
 triggers:
   - id: webhook
     type: io.kestra.plugin.core.trigger.Webhook
-    key: Y8SNnsC7wh
+    key: AlertKey9x2
+    inputs:
+      channel_id: "{{ trigger.body.channel_id }}"
+      guild_id: "{{ trigger.body.guild_id }}"
+      reaction_count: "{{ trigger.body.reaction_count ?? '1' }}"
 
-timeout: PT5M
 concurrency:
   behavior: QUEUE
   limit: 1

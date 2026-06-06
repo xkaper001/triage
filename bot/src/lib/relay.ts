@@ -13,10 +13,14 @@ export async function handleThreadCreate(thread: ThreadChannel, env: BotEnv): Pr
 
   let firstMessage = "";
   let firstMessageId = "";
+  let authorId = "";
+  let authorUsername = "";
   try {
     const starter = await thread.fetchStarterMessage();
     firstMessage = starter?.content ?? "";
     firstMessageId = starter?.id ?? "";
+    authorId = starter?.author?.id ?? "";
+    authorUsername = starter?.author?.username ?? "";
   } catch (err) {
     console.warn("Could not fetch starter message:", err);
   }
@@ -32,6 +36,8 @@ export async function handleThreadCreate(thread: ThreadChannel, env: BotEnv): Pr
       parent_channel_id: thread.parentId,
       first_message: firstMessage,
       first_message_id: firstMessageId,
+      author_id: authorId,
+      author_username: authorUsername,
     }),
   });
 

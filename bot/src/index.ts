@@ -4,7 +4,7 @@ import { loadEnv, webhookUrl } from "./types.js";
 import { loadConfig } from "./lib/store.js";
 import { handleThreadCreate } from "./lib/relay.js";
 import { handleReactionAdd } from "./lib/reaction.js";
-import { handleCommand, handleButton, handleModal, handleSelectMenu } from "./lib/commands.js";
+import { handleCommand, handleButton, handleModal, handleSelectMenu, welcomeEmbed } from "./lib/commands.js";
 
 const env = loadEnv();
 console.log("[startup] env loaded:", {
@@ -33,6 +33,21 @@ const client = new Client({
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Ready — ${c.user.tag}`);
+});
+
+client.on(Events.GuildCreate, async (guild) => {
+  console.log(`[GuildCreate] Joined guild=${guild.id} name=${guild.name}`);
+  try {
+    const channel = guild.systemChannel
+      ?? guild.channels.cache
+          .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me!)?.has("SendMessages") === true)
+          .first();
+    if (channel && channel.isTextBased()) {
+      await channel.send({ embeds: [welcomeEmbed()] });
+    }
+  } catch (err) {
+    console.error("[GuildCreate] Failed to send welcome message:", err);
+  }
 });
 
 client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
