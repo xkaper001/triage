@@ -190,6 +190,49 @@ tasks:
           - bug
           - from-discord
 
+      - id: apply_reported_tag
+        type: io.kestra.plugin.scripts.python.Script
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        warningOnStdErr: false
+        script: |
+          import json, urllib.request, urllib.error
+          TOKEN = "{{ kv('DISCORD_BOT_TOKEN') }}"
+          THREAD = "{{ inputs.channel_id }}"
+          TAG_MAP_RAW = """{{ kv('GUILD_' ~ inputs.guild_id ~ '_TAG_MAP') | default('') }}"""
+          try:
+              tag_map = json.loads(TAG_MAP_RAW.strip() or "{}")
+              tag_id = tag_map.get("reported", "")
+              needs_review_id = tag_map.get("needs_review", "")
+          except Exception:
+              tag_id = ""; needs_review_id = ""
+          if not tag_id:
+              print("reported tag not configured, skipping")
+          else:
+              h = {"Authorization": f"Bot {TOKEN}"}
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(
+                      f"https://discord.com/api/v10/channels/{THREAD}", headers=h
+                  )) as r:
+                      tags = json.loads(r.read()).get("applied_tags", [])
+              except Exception as e:
+                  print(f"GET err: {e}"); tags = []
+              if needs_review_id and needs_review_id in tags:
+                  tags.remove(needs_review_id)
+              if tag_id not in tags:
+                  tags.append(tag_id)
+              req = urllib.request.Request(
+                  f"https://discord.com/api/v10/channels/{THREAD}",
+                  data=json.dumps({"applied_tags": tags}).encode(),
+                  headers={**h, "Content-Type": "application/json"},
+                  method="PATCH"
+              )
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      print(f"applied reported tag status={r.status}")
+              except urllib.error.HTTPError as e:
+                  print(f"PATCH err: {e.code}")
+
       - id: reply_with_issue_link
         type: io.kestra.plugin.core.http.Request
         uri: "https://discord.com/api/v10/channels/{{ inputs.channel_id }}/messages"

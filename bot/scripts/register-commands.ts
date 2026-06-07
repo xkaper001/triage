@@ -75,6 +75,12 @@ const commands = [
     default_member_permissions: ADMIN_ONLY,
   },
   {
+    name: "create-github-issue",
+    type: 1,
+    description: "Manually file a GitHub issue from this forum post (admin only)",
+    default_member_permissions: ADMIN_ONLY,
+  },
+  {
     name: "help",
     type: 1,
     description: "Show all available commands and what they do",

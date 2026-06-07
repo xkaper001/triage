@@ -225,6 +225,45 @@ tasks:
                 [add_reaction_tick] status={{ outputs.add_reaction_tick.code }}
                 thread={{ inputs.discord_thread_id }} msg={{ inputs.first_message_id }}
 
+            - id: apply_known_issue_tag
+              type: io.kestra.plugin.scripts.python.Script
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              warningOnStdErr: false
+              script: |
+                import json, urllib.request, urllib.error
+                TOKEN = "{{ kv('DISCORD_BOT_TOKEN') }}"
+                THREAD = "{{ inputs.discord_thread_id }}"
+                TAG_MAP_RAW = """{{ kv('GUILD_' ~ inputs.discord_guild_id ~ '_TAG_MAP') | default('') }}"""
+                try:
+                    tag_id = json.loads(TAG_MAP_RAW.strip() or "{}").get("known_issue", "")
+                except Exception:
+                    tag_id = ""
+                if not tag_id:
+                    print("known_issue tag not configured, skipping")
+                else:
+                    h = {"Authorization": f"Bot {TOKEN}"}
+                    try:
+                        with urllib.request.urlopen(urllib.request.Request(
+                            f"https://discord.com/api/v10/channels/{THREAD}", headers=h
+                        )) as r:
+                            tags = json.loads(r.read()).get("applied_tags", [])
+                    except Exception as e:
+                        print(f"GET err: {e}"); tags = []
+                    if tag_id not in tags:
+                        tags.append(tag_id)
+                    req = urllib.request.Request(
+                        f"https://discord.com/api/v10/channels/{THREAD}",
+                        data=json.dumps({"applied_tags": tags}).encode(),
+                        headers={**h, "Content-Type": "application/json"},
+                        method="PATCH"
+                    )
+                    try:
+                        with urllib.request.urlopen(req) as r:
+                            print(f"applied known_issue tag status={r.status}")
+                    except urllib.error.HTTPError as e:
+                        print(f"PATCH err: {e.code}")
+
         - id: if_discord_duplicate
           type: io.kestra.plugin.core.flow.If
           condition: "{{ fromJson(outputs.parse_triage.extractedJson).outcome == 'discord_duplicate' and fromJson(outputs.parse_triage.extractedJson).discord_duplicate_thread_id != '' }}"
@@ -263,6 +302,45 @@ tasks:
                     Authorization: "Bot {{ kv('DISCORD_BOT_TOKEN') }}"
                   options:
                     allowFailed: true
+
+                - id: apply_duplicate_tag
+                  type: io.kestra.plugin.scripts.python.Script
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  warningOnStdErr: false
+                  script: |
+                    import json, urllib.request, urllib.error
+                    TOKEN = "{{ kv('DISCORD_BOT_TOKEN') }}"
+                    THREAD = "{{ inputs.discord_thread_id }}"
+                    TAG_MAP_RAW = """{{ kv('GUILD_' ~ inputs.discord_guild_id ~ '_TAG_MAP') | default('') }}"""
+                    try:
+                        tag_id = json.loads(TAG_MAP_RAW.strip() or "{}").get("duplicate", "")
+                    except Exception:
+                        tag_id = ""
+                    if not tag_id:
+                        print("duplicate tag not configured, skipping")
+                    else:
+                        h = {"Authorization": f"Bot {TOKEN}"}
+                        try:
+                            with urllib.request.urlopen(urllib.request.Request(
+                                f"https://discord.com/api/v10/channels/{THREAD}", headers=h
+                            )) as r:
+                                tags = json.loads(r.read()).get("applied_tags", [])
+                        except Exception as e:
+                            print(f"GET err: {e}"); tags = []
+                        if tag_id not in tags:
+                            tags.append(tag_id)
+                        req = urllib.request.Request(
+                            f"https://discord.com/api/v10/channels/{THREAD}",
+                            data=json.dumps({"applied_tags": tags}).encode(),
+                            headers={**h, "Content-Type": "application/json"},
+                            method="PATCH"
+                        )
+                        try:
+                            with urllib.request.urlopen(req) as r:
+                                print(f"applied duplicate tag status={r.status}")
+                        except urllib.error.HTTPError as e:
+                            print(f"PATCH err: {e.code}")
 
             - id: log_duplicate_actions
               type: io.kestra.plugin.core.log.Log
@@ -495,6 +573,49 @@ tasks:
                     channel={{ fromJson(outputs.parse_triage.extractedJson).discord_duplicate_thread_id }}
                     body={{ outputs.reply_with_issue_link.body }}
 
+                - id: apply_reported_tag_orig
+                  type: io.kestra.plugin.scripts.python.Script
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  warningOnStdErr: false
+                  script: |
+                    import json, urllib.request, urllib.error
+                    TOKEN = "{{ kv('DISCORD_BOT_TOKEN') }}"
+                    THREAD = "{{ fromJson(outputs.parse_triage.extractedJson).discord_duplicate_thread_id }}"
+                    TAG_MAP_RAW = """{{ kv('GUILD_' ~ inputs.discord_guild_id ~ '_TAG_MAP') | default('') }}"""
+                    try:
+                        tag_map = json.loads(TAG_MAP_RAW.strip() or "{}")
+                        tag_id = tag_map.get("reported", "")
+                        needs_review_id = tag_map.get("needs_review", "")
+                    except Exception:
+                        tag_id = ""; needs_review_id = ""
+                    if not tag_id:
+                        print("reported tag not configured, skipping")
+                    else:
+                        h = {"Authorization": f"Bot {TOKEN}"}
+                        try:
+                            with urllib.request.urlopen(urllib.request.Request(
+                                f"https://discord.com/api/v10/channels/{THREAD}", headers=h
+                            )) as r:
+                                tags = json.loads(r.read()).get("applied_tags", [])
+                        except Exception as e:
+                            print(f"GET err: {e}"); tags = []
+                        if needs_review_id and needs_review_id in tags:
+                            tags.remove(needs_review_id)
+                        if tag_id not in tags:
+                            tags.append(tag_id)
+                        req = urllib.request.Request(
+                            f"https://discord.com/api/v10/channels/{THREAD}",
+                            data=json.dumps({"applied_tags": tags}).encode(),
+                            headers={**h, "Content-Type": "application/json"},
+                            method="PATCH"
+                        )
+                        try:
+                            with urllib.request.urlopen(req) as r:
+                                print(f"applied reported tag status={r.status}")
+                        except urllib.error.HTTPError as e:
+                            print(f"PATCH err: {e.code}")
+
         - id: if_no_match
           type: io.kestra.plugin.core.flow.If
           condition: "{{ fromJson(outputs.parse_triage.extractedJson).outcome == 'no_match' or (fromJson(outputs.parse_triage.extractedJson).outcome == 'discord_duplicate' and fromJson(outputs.parse_triage.extractedJson).discord_duplicate_thread_id == '') }}"
@@ -516,6 +637,45 @@ tasks:
                   key: "GUILD_{{ inputs.discord_guild_id }}_THREAD_{{ inputs.discord_thread_id }}_TRIAGE"
                   value: '{"status": "no_match", "author_id": "{{ inputs.author_id }}"}'
                   overwrite: true
+
+                - id: apply_needs_review_tag
+                  type: io.kestra.plugin.scripts.python.Script
+                  taskRunner:
+                    type: io.kestra.plugin.core.runner.Process
+                  warningOnStdErr: false
+                  script: |
+                    import json, urllib.request, urllib.error
+                    TOKEN = "{{ kv('DISCORD_BOT_TOKEN') }}"
+                    THREAD = "{{ inputs.discord_thread_id }}"
+                    TAG_MAP_RAW = """{{ kv('GUILD_' ~ inputs.discord_guild_id ~ '_TAG_MAP') | default('') }}"""
+                    try:
+                        tag_id = json.loads(TAG_MAP_RAW.strip() or "{}").get("needs_review", "")
+                    except Exception:
+                        tag_id = ""
+                    if not tag_id:
+                        print("needs_review tag not configured, skipping")
+                    else:
+                        h = {"Authorization": f"Bot {TOKEN}"}
+                        try:
+                            with urllib.request.urlopen(urllib.request.Request(
+                                f"https://discord.com/api/v10/channels/{THREAD}", headers=h
+                            )) as r:
+                                tags = json.loads(r.read()).get("applied_tags", [])
+                        except Exception as e:
+                            print(f"GET err: {e}"); tags = []
+                        if tag_id not in tags:
+                            tags.append(tag_id)
+                        req = urllib.request.Request(
+                            f"https://discord.com/api/v10/channels/{THREAD}",
+                            data=json.dumps({"applied_tags": tags}).encode(),
+                            headers={**h, "Content-Type": "application/json"},
+                            method="PATCH"
+                        )
+                        try:
+                            with urllib.request.urlopen(req) as r:
+                                print(f"applied needs_review tag status={r.status}")
+                        except urllib.error.HTTPError as e:
+                            print(f"PATCH err: {e.code}")
 
             - id: log_no_match_actions
               type: io.kestra.plugin.core.log.Log

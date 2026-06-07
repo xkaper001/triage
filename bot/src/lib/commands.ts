@@ -95,6 +95,7 @@ function helpEmbed() {
       { name: "/set-api-key", value: "Quickly update the Gemini API key", inline: false },
       { name: "/set-baseurl [url]", value: "Update the OpenAI-compatible base URL (optional, for custom endpoints)", inline: false },
       { name: "/set-forum-channel #channel", value: "Set the forum channel to monitor for new posts", inline: false },
+      { name: "/create-github-issue", value: "Manually file a GitHub issue from this forum post (admin only)", inline: false },
       { name: "/status", value: "Show the currently monitored forum channel", inline: false },
       { name: "/help", value: "Show this message", inline: false },
     )
@@ -254,6 +255,37 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
         ? `✅ Monitoring <#${forumChannelId}> (\`${forumChannelId}\`)`
         : "⚠️ No forum channel set. Use `/set-forum-channel` or open `/setup`.";
       await interaction.reply({ content, ...EPH });
+      break;
+    }
+
+    case "create-github-issue": {
+      const channel = interaction.channel;
+      if (!channel || channel.type !== ChannelType.PublicThread) {
+        await interaction.reply({ content: "⚠️ Run this inside a forum post thread.", ...EPH });
+        break;
+      }
+      const forumChannelId = getForumChannelId(guildId);
+      if (!forumChannelId || channel.parentId !== forumChannelId) {
+        await interaction.reply({ content: "⚠️ This thread is not in the monitored forum channel.", ...EPH });
+        break;
+      }
+      await interaction.deferReply(EPH);
+      const alertUrl = webhookUrl(env, "alert");
+      try {
+        const res = await fetch(alertUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel_id: channel.id, guild_id: guildId, force: "true" }),
+        });
+        if (res.ok) {
+          await interaction.editReply({ content: "⏳ Creating GitHub issue — Kestra will post the link in this thread when done." });
+        } else {
+          await interaction.editReply({ content: `⚠️ Kestra returned ${res.status}.` });
+        }
+      } catch (err) {
+        console.error("[create-github-issue]", err);
+        await interaction.editReply({ content: "⚠️ Failed to reach Kestra." });
+      }
       break;
     }
 
