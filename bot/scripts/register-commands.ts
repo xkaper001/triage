@@ -26,11 +26,8 @@ const commands = [
   {
     name: "repo",
     type: 1,
-    description: "Set the default GitHub repository for issue filing (owner/repo)",
+    description: "Set the GitHub repository to watch for issues (select from installed repos)",
     default_member_permissions: ADMIN_ONLY,
-    options: [
-      { name: "repo", description: "Repository in owner/repo format", type: 3, required: false },
-    ],
   },
   {
     name: "set-api-key",
