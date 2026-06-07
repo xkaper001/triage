@@ -69,6 +69,18 @@ const commands = [
     ],
   },
   {
+    name: "enable",
+    type: 1,
+    description: "Enable automatic triage for new forum posts",
+    default_member_permissions: ADMIN_ONLY,
+  },
+  {
+    name: "disable",
+    type: 1,
+    description: "Pause triage — new posts are ignored until re-enabled",
+    default_member_permissions: ADMIN_ONLY,
+  },
+  {
     name: "status",
     type: 1,
     description: "Show the currently monitored forum channel",

@@ -139,6 +139,8 @@ function helpEmbed() {
       { name: "/set-forum-channel #channel", value: "Set the forum channel to monitor for new posts", inline: false },
       { name: "/install-github-app", value: "Step-by-step guide to install the Triage GitHub App and link your repo", inline: false },
       { name: "/create-github-issue", value: "Manually file a GitHub issue from this forum post (admin only)", inline: false },
+      { name: "/enable", value: "Enable automatic triage for new forum posts", inline: false },
+      { name: "/disable", value: "Pause triage — new posts are ignored until re-enabled", inline: false },
       { name: "/status", value: "Show the currently monitored forum channel", inline: false },
       { name: "/help", value: "Show this message", inline: false },
     )
@@ -289,6 +291,18 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
       const channel = interaction.options.getChannel("channel", true);
       setForumChannelId(guildId, channel.id);
       await interaction.reply({ content: `✅ Forum channel set to <#${channel.id}> (\`${channel.id}\`).`, ...EPH });
+      break;
+    }
+
+    case "enable": {
+      const ok = await postConfig(env, guildId, "TRIAGE_ENABLED", "true");
+      await interaction.reply({ content: ok ? "✅ Triage enabled — new forum posts will be triaged automatically." : "⚠️ Failed to enable.", ...EPH });
+      break;
+    }
+
+    case "disable": {
+      const ok = await postConfig(env, guildId, "TRIAGE_ENABLED", "false");
+      await interaction.reply({ content: ok ? "⏸️ Triage disabled — new posts will be ignored until re-enabled." : "⚠️ Failed to disable.", ...EPH });
       break;
     }
 
