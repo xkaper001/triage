@@ -23,6 +23,13 @@ export function startCallbackServer(env: BotEnv, client: Client): void {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
 
+    if (req.method === "GET" && url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({ status: "ok", uptime: Math.floor(process.uptime()) })
+      );
+      return;
+    }
+
     if (req.method !== "GET" || url.pathname !== "/github/callback") {
       res.writeHead(404).end("Not found");
       return;
