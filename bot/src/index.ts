@@ -4,7 +4,7 @@ import { loadEnv, webhookUrl } from "./types.js";
 import { loadConfig } from "./lib/store.js";
 import { handleThreadCreate } from "./lib/relay.js";
 import { handleReactionAdd } from "./lib/reaction.js";
-import { handleCommand, handleButton, handleModal, handleSelectMenu, welcomeMessage } from "./lib/commands.js";
+import { handleCommand, handleButton, handleModal, handleSelectMenu, handleStringSelectMenu, welcomeMessage } from "./lib/commands.js";
 import { startCallbackServer } from "./lib/callback.js";
 
 const env = loadEnv();
@@ -80,6 +80,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     else if (interaction.isButton()) await handleButton(interaction, env);
     else if (interaction.isModalSubmit()) await handleModal(interaction, env);
     else if (interaction.isChannelSelectMenu()) await handleSelectMenu(interaction, env);
+    else if (interaction.isStringSelectMenu()) await handleStringSelectMenu(interaction, env);
     else console.log(`[interaction] unhandled type=${type}`);
   } catch (err) {
     console.error(`[interaction] UNHANDLED ERROR type=${type}:`, err);

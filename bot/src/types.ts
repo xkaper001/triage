@@ -6,6 +6,8 @@ export interface BotEnv {
   KESTRA_ALERT_WEBHOOK_KEY: string;
   KESTRA_CONFIG_WEBHOOK_KEY: string;
   GITHUB_APP_URL?: string;
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
 }
 
 export function loadEnv(): BotEnv {
@@ -28,6 +30,8 @@ export function loadEnv(): BotEnv {
     KESTRA_ALERT_WEBHOOK_KEY: process.env.KESTRA_ALERT_WEBHOOK_KEY!,
     KESTRA_CONFIG_WEBHOOK_KEY: process.env.KESTRA_CONFIG_WEBHOOK_KEY!,
     GITHUB_APP_URL: process.env.GITHUB_APP_URL,
+    GITHUB_APP_ID: process.env.GITHUB_APP_ID,
+    GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, "\n"),
   };
 }
 

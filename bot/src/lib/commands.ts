@@ -3,6 +3,7 @@ import {
   type ButtonInteraction,
   type ModalSubmitInteraction,
   type ChannelSelectMenuInteraction,
+  type StringSelectMenuInteraction,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -11,6 +12,8 @@ import {
   EmbedBuilder,
   MessageFlags,
   ModalBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
@@ -19,6 +22,7 @@ const EPH = { flags: MessageFlags.Ephemeral } as const;
 import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
 import { getForumChannelId, setForumChannelId } from "./store.js";
+import { getGuildRepos } from "./callback.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 
@@ -304,7 +308,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
         ...(installUrl
           ? [new ButtonBuilder().setLabel("Install GitHub App").setStyle(ButtonStyle.Link).setURL(installUrl).setEmoji("🐙")]
           : []),
-        new ButtonBuilder().setCustomId("install_github:configure").setLabel("Enter repo manually").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("install_github:configure").setLabel("Set Repository").setStyle(ButtonStyle.Secondary).setEmoji("📁"),
       );
       const embed = new EmbedBuilder()
         .setTitle("🐙 Install the Triage GitHub App")
@@ -481,7 +485,7 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
       ...(installUrl
         ? [new ButtonBuilder().setLabel("Install GitHub App").setStyle(ButtonStyle.Link).setURL(installUrl).setEmoji("🐙")]
         : []),
-      new ButtonBuilder().setCustomId("install_github:configure").setLabel("Enter manually").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("install_github:configure").setLabel("Set Repository").setStyle(ButtonStyle.Secondary).setEmoji("📁"),
       new ButtonBuilder().setCustomId("setup:back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
     );
     const embed = new EmbedBuilder()
@@ -498,22 +502,35 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
   }
 
   if (customId === "install_github:configure") {
-    const m = new ModalBuilder().setCustomId("install_github_modal").setTitle("GitHub App Configuration");
-    m.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("repo").setLabel("Repository (owner/repo)")
-          .setStyle(TextInputStyle.Short).setPlaceholder("owner/repo")
-          .setRequired(true).setMaxLength(200),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("installation_id").setLabel("Installation ID")
-          .setStyle(TextInputStyle.Short).setPlaceholder("12345678")
-          .setRequired(true).setMaxLength(20),
-      ),
-    );
-    await interaction.showModal(m);
+    const repos = getGuildRepos(guildId);
+    if (repos.length) {
+      const select = new StringSelectMenuBuilder()
+        .setCustomId("install_github:repo_select")
+        .setPlaceholder("Pick the repo to watch for issues")
+        .addOptions(
+          repos.slice(0, 25).map((r) =>
+            new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)
+          )
+        );
+      const backRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId("setup:back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+      );
+      await interaction.update({
+        embeds: [new EmbedBuilder().setTitle("📁 Select Repository").setColor(0x5865f2).setDescription("Choose the repo where GitHub issues will be filed.")],
+        components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select), backRow],
+      });
+    } else {
+      const m = new ModalBuilder().setCustomId("install_github_modal").setTitle("Set Repository to Watch");
+      m.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("repo").setLabel("Repository (owner/repo)")
+            .setStyle(TextInputStyle.Short).setPlaceholder("owner/repo")
+            .setRequired(true).setMaxLength(200),
+        ),
+      );
+      await interaction.showModal(m);
+    }
     return;
   }
 
@@ -596,12 +613,8 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
     }
 
     case "install_github_modal": {
-      const results = await Promise.all([
-        postConfig(env, guildId, "DEFAULT_REPO", get("repo")),
-        postConfig(env, guildId, "GITHUB_APP_INSTALLATION_ID", get("installation_id")),
-      ]);
-      const ok = results.every(Boolean);
-      await interaction.reply({ content: ok ? "✅ GitHub App configured — issues will now be filed as the Triage bot." : "⚠️ Failed to save — check bot logs.", ...EPH });
+      const ok = await postConfig(env, guildId, "DEFAULT_REPO", get("repo"));
+      await interaction.reply({ content: ok ? `✅ Repo set to \`${get("repo")}\` — install the GitHub App to complete setup.` : "⚠️ Failed to save — check bot logs.", ...EPH });
       break;
     }
 
@@ -613,5 +626,32 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
 
     default:
       await interaction.reply({ content: "Unknown modal.", ...EPH });
+  }
+}
+
+export async function handleStringSelectMenu(
+  interaction: StringSelectMenuInteraction,
+  env: BotEnv,
+): Promise<void> {
+  const { customId } = interaction;
+  const guildId = interaction.guildId ?? "unknown";
+
+  if (customId === "install_github:repo_select") {
+    const repo = interaction.values[0];
+    const ok = await postConfig(env, guildId, "DEFAULT_REPO", repo);
+    await interaction.update({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle(ok ? "✅ Repository set" : "⚠️ Failed")
+          .setDescription(ok ? `Watching \`${repo}\` — issues will be filed there.` : "Failed to save. Check bot logs.")
+          .setColor(ok ? 0x57f287 : 0xfee75c),
+      ],
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("setup:back").setLabel("← Back to Setup").setStyle(ButtonStyle.Secondary),
+        ),
+      ],
+    });
+    return;
   }
 }
