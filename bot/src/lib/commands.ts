@@ -261,20 +261,27 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
     }
 
     case "install-github-app": {
+      const state = `${guildId}_${interaction.user.id}`;
+      const installUrl = env.GITHUB_APP_URL ? `${env.GITHUB_APP_URL}?state=${state}` : null;
       const installRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        ...(env.GITHUB_APP_URL
-          ? [new ButtonBuilder().setLabel("Install GitHub App").setStyle(ButtonStyle.Link).setURL(env.GITHUB_APP_URL).setEmoji("🐙")]
+        ...(installUrl
+          ? [new ButtonBuilder().setLabel("Install GitHub App").setStyle(ButtonStyle.Link).setURL(installUrl).setEmoji("🐙")]
           : []),
-        new ButtonBuilder().setCustomId("install_github:configure").setLabel("I've installed it — enter repo & ID").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("install_github:configure").setLabel("Enter repo manually").setStyle(ButtonStyle.Secondary),
       );
       const embed = new EmbedBuilder()
         .setTitle("🐙 Install the Triage GitHub App")
         .setColor(0x5865f2)
-        .setDescription("The Triage bot creates GitHub issues on your behalf. Install it on your repo first, then enter your details.")
+        .setDescription("The Triage bot creates GitHub issues on your behalf. Install it on your repo, then we'll capture the Installation ID automatically.")
         .addFields(
-          { name: "Step 1 — Install", value: env.GITHUB_APP_URL ? `Click **Install GitHub App** below.` : "Install the GitHub App on your repo via the app's page.", inline: false },
-          { name: "Step 2 — Get Installation ID", value: "After installing, check the URL:\n`github.com/settings/installations/**{id}**`\nCopy that number.", inline: false },
-          { name: "Step 3 — Configure", value: "Click **I've installed it** below and enter your repo + installation ID.", inline: false },
+          {
+            name: installUrl ? "Step 1 — Click Install" : "Step 1 — Install",
+            value: installUrl
+              ? "Click **Install GitHub App** below. After installing, GitHub redirects back and saves everything automatically."
+              : "Install the GitHub App on your repo, then use **Enter repo manually** to enter the repo and Installation ID.",
+            inline: false,
+          },
+          { name: "Step 2 — Done", value: "You'll get a DM confirming the setup. Then triage issues will be filed as the bot.", inline: false },
         );
       await interaction.reply({ embeds: [embed], components: [installRow], ...EPH });
       break;

@@ -5,6 +5,7 @@ import { loadConfig } from "./lib/store.js";
 import { handleThreadCreate } from "./lib/relay.js";
 import { handleReactionAdd } from "./lib/reaction.js";
 import { handleCommand, handleButton, handleModal, handleSelectMenu, welcomeEmbed } from "./lib/commands.js";
+import { startCallbackServer } from "./lib/callback.js";
 
 const env = loadEnv();
 console.log("[startup] env loaded:", {
@@ -87,5 +88,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 });
+
+if (env.GITHUB_APP_URL) startCallbackServer(env, client);
 
 client.login(env.DISCORD_BOT_TOKEN);

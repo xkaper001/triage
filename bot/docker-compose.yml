@@ -14,3 +14,9 @@ services:
 
 volumes:
   bot-data:
+
+# In case you use a reverse proxy, make sure to connect the bot to the same network as the reverse proxy
+networks:
+  default:
+    external: true
+    name: proxy
