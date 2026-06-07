@@ -53,7 +53,7 @@ export function welcomeEmbed() {
     .addFields(
       { name: "Step 1 — Set your forum channel", value: "Run `/setup` → click **Forum Channel** and pick the forum to monitor.", inline: false },
       { name: "Step 2 — Add your Gemini API key", value: "Run `/setup` → click **AI Provider** → enter your Gemini API key (`AIzaSy...`).", inline: false },
-      { name: "Step 3 — Link your GitHub repo", value: "Run `/setup` → click **GitHub** → enter your repo (`owner/repo`) and a GitHub token with `issues:write`.", inline: false },
+      { name: "Step 3 — Link your GitHub repo", value: "Run `/setup` → click **GitHub** → enter your repo (`owner/repo`). The triage bot handles auth automatically.", inline: false },
       { name: "Step 4 — Done!", value: "Post something in your forum channel and watch me triage it. Run `/status` anytime to confirm the channel is set.", inline: false },
       { name: "Need help?", value: "Run `/help` for a full command reference.", inline: false },
     )
@@ -70,7 +70,8 @@ function setupPanelData(guildId: string) {
         value: forumId ? `<#${forumId}> (\`${forumId}\`)` : "❌ Not set — click **Forum Channel** below",
         inline: false,
       },
-      { name: "Gemini API Key", value: "Set via **AI Provider** button", inline: false }
+      { name: "Gemini API Key", value: "Set via **AI Provider** button", inline: false },
+      { name: "GitHub Repo", value: "Set via **GitHub** button (owner/repo only — app auth is global)", inline: false }
     )
     .setColor(forumId ? 0x57f287 : 0xfee75c)
     .setFooter({ text: "AI & GitHub credentials are stored securely in Kestra KV." });
@@ -91,7 +92,7 @@ function helpEmbed() {
     .addFields(
       { name: "/setup", value: "Open the configuration panel (AI provider, GitHub, forum channel)", inline: false },
       { name: "/setup-tags", value: "Create triage tags on the forum channel (Known Issue, Duplicate, Needs Review, etc.)", inline: false },
-      { name: "/repo [owner/repo]", value: "Set the default GitHub repository for issue filing", inline: false },
+      { name: "/repo [owner/repo]", value: "Set the GitHub repository where issues are filed", inline: false },
       { name: "/set-api-key", value: "Quickly update the Gemini API key", inline: false },
       { name: "/set-baseurl [url]", value: "Update the OpenAI-compatible base URL (optional, for custom endpoints)", inline: false },
       { name: "/set-forum-channel #channel", value: "Set the forum channel to monitor for new posts", inline: false },
@@ -278,7 +279,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
           body: JSON.stringify({ channel_id: channel.id, guild_id: guildId, force: "true" }),
         });
         if (res.ok) {
-          await interaction.editReply({ content: "⏳ Creating GitHub issue — Kestra will post the link in this thread when done." });
+          await interaction.editReply({ content: "⏳ Creating GitHub issue — I'll post the link in this thread when done." });
         } else {
           await interaction.editReply({ content: `⚠️ Kestra returned ${res.status}.` });
         }
@@ -325,12 +326,6 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
           .setCustomId("repo").setLabel("Repository (owner/repo)")
           .setStyle(TextInputStyle.Short).setPlaceholder("owner/repo")
           .setRequired(true).setMaxLength(200),
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId("github_token").setLabel("GitHub Token (optional)")
-          .setStyle(TextInputStyle.Short).setPlaceholder("ghp_...")
-          .setRequired(false).setMaxLength(500),
       ),
     );
     await interaction.showModal(m);
@@ -412,13 +407,8 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
     }
 
     case "setup_github_modal": {
-      const repo = get("repo");
-      const token = get("github_token");
-      const saves: Array<Promise<boolean>> = [postConfig(env, guildId, "DEFAULT_REPO", repo)];
-      if (token) saves.push(postConfig(env, guildId, "GITHUB_TOKEN", token));
-      const results = await Promise.all(saves);
-      const ok = results.every(Boolean);
-      await interaction.reply({ content: ok ? "✅ GitHub configured." : "⚠️ Failed to save — check bot logs.", ...EPH });
+      const ok = await postConfig(env, guildId, "DEFAULT_REPO", get("repo"));
+      await interaction.reply({ content: ok ? "✅ GitHub repo configured." : "⚠️ Failed to save — check bot logs.", ...EPH });
       break;
     }
 
