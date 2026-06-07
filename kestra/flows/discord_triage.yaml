@@ -38,7 +38,7 @@ inputs:
 tasks:
   - id: gate
     type: io.kestra.plugin.core.flow.Switch
-    value: "{{ kv('TRIAGE_ENABLED') | default('true') }}"
+    value: "{{ kv('GUILD_' ~ inputs.discord_guild_id ~ '_TRIAGE_ENABLED') | default('true') }}"
     cases:
       "true":
         - id: log_input

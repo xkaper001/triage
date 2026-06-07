@@ -17,6 +17,9 @@ inputs:
   - id: reaction_count
     type: STRING
     defaults: "{{ trigger.body.reaction_count ?? '1' }}"
+  - id: force
+    type: STRING
+    defaults: "{{ trigger.body.force ?? 'false' }}"
 
 tasks:
   - id: read_triage
@@ -45,18 +48,23 @@ tasks:
           except Exception:
               pass
 
+      force = "{{ inputs.force }}" == "true"
+
+      # Admin force-create bypasses all guards
+      if force:
+          Kestra.outputs({"should_escalate": "true", "author_id": "", "forced": "true"})
       # Only escalate: thread was triaged as no_match, not yet escalated, count >= 3
-      if data and data.get("status") == "no_match" and count >= 3:
+      elif data and data.get("status") == "no_match" and count >= 3:
           author_id = data.get("author_id", "")
-          Kestra.outputs({"should_escalate": "true", "author_id": author_id})
+          Kestra.outputs({"should_escalate": "true", "author_id": author_id, "forced": "false"})
       else:
-          Kestra.outputs({"should_escalate": "false", "author_id": ""})
+          Kestra.outputs({"should_escalate": "false", "author_id": "", "forced": "false"})
 
   - id: log_eligibility
     type: io.kestra.plugin.core.log.Log
     level: INFO
     message: |
-      [check_eligibility] should_escalate={{ outputs.check_eligibility.vars.should_escalate }}
+      [check_eligibility] should_escalate={{ outputs.check_eligibility.vars.should_escalate }} forced={{ outputs.check_eligibility.vars.forced }}
       channel={{ inputs.channel_id }} reaction_count={{ inputs.reaction_count }}
       triage_kv={{ outputs.read_triage.value | default('(not set)') }}
 
@@ -101,7 +109,7 @@ tasks:
 
           Thread channel_id: {{ inputs.channel_id }}
           Guild: {{ inputs.guild_id }}
-          Confirmed by {{ inputs.reaction_count }} users via ⬆️ upvotes.
+          {% if inputs.force == 'true' %}Filed manually by an admin via /create-github-issue command.{% else %}Confirmed by {{ inputs.reaction_count }} users via ⬆️ upvotes.{% endif %}
         provider:
           type: io.kestra.plugin.ai.provider.GoogleGemini
           apiKey: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GEMINI_API_KEY') }}"
@@ -180,9 +188,15 @@ tasks:
           [draft_issue_agent] title={{ fromJson(outputs.parse_draft.extractedJson).title }}
           channel={{ inputs.channel_id }} reaction_count={{ inputs.reaction_count }}
 
+      - id: get_github_token
+        type: io.kestra.plugin.github.auth.AppToken
+        clientId: "{{ kv('GITHUB_APP_ID') }}"
+        privateKey: "{{ kv('GITHUB_APP_PRIVATE_KEY') }}"
+        installationId: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GITHUB_APP_INSTALLATION_ID') }}"
+
       - id: create_github_issue
         type: io.kestra.plugin.github.issues.Create
-        oauthToken: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GITHUB_TOKEN') }}"
+        appInstallationToken: "{{ outputs.get_github_token.token }}"
         repository: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_DEFAULT_REPO') }}"
         title: "{{ fromJson(outputs.parse_draft.extractedJson).title }}"
         body: "{{ fromJson(outputs.parse_draft.extractedJson).body }}"
@@ -241,18 +255,19 @@ tasks:
         headers:
           Authorization: "Bot {{ kv('DISCORD_BOT_TOKEN') }}"
         body: |
-          {"content": {{ (("<@" ~ outputs.check_eligibility.vars.author_id ~ "> " if outputs.check_eligibility.vars.author_id != "" else "") ~ "🎉 Confirmed by " ~ inputs.reaction_count ~ " users — filed on GitHub: **[" ~ fromJson(outputs.parse_draft.extractedJson).title ~ "](" ~ outputs.create_github_issue.issueUrl ~ ")**") | toJson }}}
+          {"content": {{ (("✅ Admin filed on GitHub: **[" ~ fromJson(outputs.parse_draft.extractedJson).title ~ "](" ~ outputs.create_github_issue.issueUrl ~ ")**") if outputs.check_eligibility.vars.forced == "true" else (("<@" ~ outputs.check_eligibility.vars.author_id ~ "> " if outputs.check_eligibility.vars.author_id != "" else "") ~ "🎉 Confirmed by " ~ inputs.reaction_count ~ " users — filed on GitHub: **[" ~ fromJson(outputs.parse_draft.extractedJson).title ~ "](" ~ outputs.create_github_issue.issueUrl ~ ")**")) | toJson }}}
         options:
           allowFailed: true
 
 triggers:
   - id: webhook
     type: io.kestra.plugin.core.trigger.Webhook
-    key: AlertKey9x2
+    key: Y8SNnsC7wh
     inputs:
       channel_id: "{{ trigger.body.channel_id }}"
       guild_id: "{{ trigger.body.guild_id }}"
       reaction_count: "{{ trigger.body.reaction_count ?? '1' }}"
+      force: "{{ trigger.body.force ?? 'false' }}"
 
 concurrency:
   behavior: QUEUE
