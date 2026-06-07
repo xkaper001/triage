@@ -4,7 +4,7 @@ import { loadEnv, webhookUrl } from "./types.js";
 import { loadConfig } from "./lib/store.js";
 import { handleThreadCreate } from "./lib/relay.js";
 import { handleReactionAdd } from "./lib/reaction.js";
-import { handleCommand, handleButton, handleModal, handleSelectMenu, welcomeEmbed } from "./lib/commands.js";
+import { handleCommand, handleButton, handleModal, handleSelectMenu, welcomeMessage } from "./lib/commands.js";
 import { startCallbackServer } from "./lib/callback.js";
 
 const env = loadEnv();
@@ -44,7 +44,7 @@ client.on(Events.GuildCreate, async (guild) => {
         .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me!)?.has("SendMessages") === true)
         .first();
     if (channel && channel.isTextBased()) {
-      await channel.send({ embeds: [welcomeEmbed()] });
+      await channel.send(welcomeMessage());
     }
   } catch (err) {
     console.error("[GuildCreate] Failed to send welcome message:", err);

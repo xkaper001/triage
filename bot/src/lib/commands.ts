@@ -43,46 +43,83 @@ const TRIAGE_TAGS: Omit<DiscordForumTag, "id">[] = [
   { name: "By Design",       moderated: true,  emoji_id: null, emoji_name: "🔧" },
 ];
 
-export function welcomeEmbed() {
-  return new EmbedBuilder()
-    .setTitle("👋 Thanks for adding Triage Bot!")
+export function welcomeMessage() {
+  const embed = new EmbedBuilder()
+    .setTitle("⚡ Triage Bot is live!")
     .setColor(0x5865f2)
     .setDescription(
-      "I automatically triage new forum posts — finding matching GitHub issues or duplicates — and escalate confirmed bugs to GitHub.\n\nFollow these steps to get started:"
+      "I watch your forum channel and automatically triage every new post — matching GitHub issues, catching duplicates, and escalating confirmed bugs.\n​"
     )
     .addFields(
-      { name: "Step 1 — Set your forum channel", value: "Run `/setup` → click **Forum Channel** and pick the forum to monitor.", inline: false },
-      { name: "Step 2 — Add your Gemini API key", value: "Run `/setup` → click **AI Provider** → enter your Gemini API key (`AIzaSy...`).", inline: false },
-      { name: "Step 3 — Install the GitHub App", value: "Install the Triage GitHub App on your repo, then run `/setup` → **GitHub** → enter your repo and the Installation ID (from the URL after installing).", inline: false },
-      { name: "Step 4 — Done!", value: "Post something in your forum channel and watch me triage it. Run `/status` anytime to confirm the channel is set.", inline: false },
-      { name: "Need help?", value: "Run `/help` for a full command reference.", inline: false },
+      { name: "🔍  Auto-triage", value: "Every post is matched against open GitHub issues and existing threads.", inline: true },
+      { name: "📊  Escalation", value: "3 upvotes on an unknown post → GitHub issue filed automatically.", inline: true },
+      { name: "🤖  AI-powered", value: "Gemini reads and classifies each report end-to-end.", inline: true },
+      { name: "​", value: "Run `/setup` to configure the bot, or click **Quick Setup** below.", inline: false },
     )
-    .setFooter({ text: "All credentials are stored securely in Kestra KV — never logged." });
-}
-
-function setupPanelData(guildId: string) {
-  const forumId = getForumChannelId(guildId);
-  const embed = new EmbedBuilder()
-    .setTitle("⚙️ Bot Configuration")
-    .addFields(
-      {
-        name: "Forum Channel",
-        value: forumId ? `<#${forumId}> (\`${forumId}\`)` : "❌ Not set — click **Forum Channel** below",
-        inline: false,
-      },
-      { name: "Gemini API Key", value: "Set via **AI Provider** button", inline: false },
-      { name: "GitHub", value: "Set via **GitHub** button (repo + Installation ID after installing the GitHub App)", inline: false }
-    )
-    .setColor(forumId ? 0x57f287 : 0xfee75c)
-    .setFooter({ text: "AI & GitHub credentials are stored securely in Kestra KV." });
+    .setFooter({ text: "Credentials are stored securely in Kestra KV — never logged." });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("setup:ai").setLabel("AI Provider").setStyle(ButtonStyle.Primary).setEmoji("🤖"),
-    new ButtonBuilder().setCustomId("setup:github").setLabel("GitHub").setStyle(ButtonStyle.Primary).setEmoji("🐙"),
-    new ButtonBuilder().setCustomId("setup:forum").setLabel("Forum Channel").setStyle(ButtonStyle.Secondary).setEmoji("💬"),
+    new ButtonBuilder().setCustomId("welcome:setup").setLabel("Quick Setup").setStyle(ButtonStyle.Primary).setEmoji("⚡"),
+    new ButtonBuilder().setCustomId("welcome:help").setLabel("View Commands").setStyle(ButtonStyle.Secondary).setEmoji("📖"),
   );
 
   return { embeds: [embed], components: [row] };
+}
+
+function setupPanelData(guildId: string, env?: BotEnv) {
+  const forumId = getForumChannelId(guildId);
+
+  const embed = new EmbedBuilder()
+    .setTitle("⚙️ Triage Bot — Setup")
+    .setColor(forumId ? 0x57f287 : 0xfee75c)
+    .setDescription("Configure each step below. Credentials are stored securely in Kestra KV.")
+    .addFields(
+      {
+        name: "1 · Forum Channel",
+        value: forumId ? `✅ <#${forumId}>` : "❌ Not set",
+        inline: true,
+      },
+      {
+        name: "2 · AI Provider",
+        value: "🤖 Gemini API key",
+        inline: true,
+      },
+      {
+        name: "3 · GitHub App",
+        value: "🐙 Repo + installation",
+        inline: true,
+      },
+      {
+        name: "4 · Forum Tags",
+        value: "🏷️ Bug, Duplicate, Reported…",
+        inline: true,
+      },
+      {
+        name: "5 · Install GitHub App",
+        value: "⚙️ Authorize repo access",
+        inline: true,
+      },
+    )
+    .setFooter({ text: "Click a button below to configure that step." });
+
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("setup:forum").setLabel("Forum Channel").setStyle(forumId ? ButtonStyle.Secondary : ButtonStyle.Primary).setEmoji("💬"),
+    new ButtonBuilder().setCustomId("setup:ai").setLabel("AI Provider").setStyle(ButtonStyle.Primary).setEmoji("🤖"),
+    new ButtonBuilder().setCustomId("setup:github").setLabel("GitHub Repo").setStyle(ButtonStyle.Primary).setEmoji("🐙"),
+  );
+
+  const row2Components = [
+    new ButtonBuilder().setCustomId("setup:tags").setLabel("Setup Tags").setStyle(ButtonStyle.Secondary).setEmoji("🏷️"),
+    new ButtonBuilder().setCustomId("setup:install_app").setLabel("Install GitHub App").setStyle(ButtonStyle.Secondary).setEmoji("⚙️"),
+  ];
+  if (env?.GITHUB_APP_URL) {
+    row2Components.push(
+      new ButtonBuilder().setLabel("Open GitHub App Page").setStyle(ButtonStyle.Link).setURL(env.GITHUB_APP_URL).setEmoji("🔗"),
+    );
+  }
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(...row2Components);
+
+  return { embeds: [embed], components: [row1, row2] };
 }
 
 function helpEmbed() {
@@ -132,7 +169,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
 
   switch (interaction.commandName) {
     case "setup":
-      await interaction.reply({ ...setupPanelData(guildId), ...EPH });
+      await interaction.reply({ ...setupPanelData(guildId, env), ...EPH });
       break;
 
     case "set-api-key": {
@@ -379,8 +416,84 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
     return;
   }
 
+  if (customId === "welcome:setup") {
+    await interaction.reply({ ...setupPanelData(guildId, env), ...EPH });
+    return;
+  }
+
+  if (customId === "welcome:help") {
+    await interaction.reply({ embeds: [helpEmbed()], ...EPH });
+    return;
+  }
+
   if (customId === "setup:back") {
-    await interaction.update(setupPanelData(guildId));
+    await interaction.update(setupPanelData(guildId, env));
+    return;
+  }
+
+  if (customId === "setup:tags") {
+    await interaction.deferUpdate();
+    const forumChannelId = getForumChannelId(guildId);
+    if (!forumChannelId) {
+      await interaction.followUp({ content: "⚠️ Set a forum channel first.", ...EPH });
+      return;
+    }
+    const channelRes = await fetch(`${DISCORD_API}/channels/${forumChannelId}`, {
+      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+    });
+    if (!channelRes.ok) {
+      await interaction.followUp({ content: `⚠️ Failed to fetch channel: ${channelRes.status}`, ...EPH });
+      return;
+    }
+    const channelData = await channelRes.json() as { available_tags?: (DiscordForumTag & { id: string })[] };
+    const existingTags = channelData.available_tags ?? [];
+    const existingNames = new Set(existingTags.map((t) => t.name.toLowerCase()));
+    const toAdd = TRIAGE_TAGS.filter((t) => !existingNames.has(t.name.toLowerCase()));
+    const allTags = [...existingTags, ...toAdd];
+    const patchRes = await fetch(`${DISCORD_API}/channels/${forumChannelId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ available_tags: allTags }),
+    });
+    if (!patchRes.ok) {
+      await interaction.followUp({ content: `⚠️ Failed to update tags: ${patchRes.status}`, ...EPH });
+      return;
+    }
+    const updated = await patchRes.json() as { available_tags: (DiscordForumTag & { id: string })[] };
+    const tagMap: Record<string, string> = {};
+    for (const tag of updated.available_tags) {
+      const key = tag.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+      tagMap[key] = tag.id;
+    }
+    await postConfig(env, guildId, "TAG_MAP", JSON.stringify(tagMap));
+    const skipped = TRIAGE_TAGS.length - toAdd.length;
+    await interaction.followUp({
+      content: `✅ Tags configured — **${toAdd.length}** added, **${skipped}** already existed.`,
+      ...EPH,
+    });
+    return;
+  }
+
+  if (customId === "setup:install_app") {
+    const state = `${guildId}_${interaction.user.id}`;
+    const installUrl = env.GITHUB_APP_URL ? `${env.GITHUB_APP_URL}?state=${state}` : null;
+    const installRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      ...(installUrl
+        ? [new ButtonBuilder().setLabel("Install GitHub App").setStyle(ButtonStyle.Link).setURL(installUrl).setEmoji("🐙")]
+        : []),
+      new ButtonBuilder().setCustomId("install_github:configure").setLabel("Enter manually").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("setup:back").setLabel("← Back").setStyle(ButtonStyle.Secondary),
+    );
+    const embed = new EmbedBuilder()
+      .setTitle("⚙️ Install the GitHub App")
+      .setColor(0x5865f2)
+      .setDescription(installUrl
+        ? "Click **Install GitHub App** — after installing, the Installation ID is saved automatically and you'll get a DM."
+        : "Install the GitHub App on your repo, then click **Enter manually** to provide the repo and Installation ID.")
+      .addFields(
+        { name: "Finding your Installation ID", value: "After installing: `github.com/settings/installations/{id}` — copy the number at the end.", inline: false },
+      );
+    await interaction.update({ embeds: [embed], components: [installRow] });
     return;
   }
 
