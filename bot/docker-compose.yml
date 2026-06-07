@@ -2,6 +2,8 @@ services:
   triage-bot:
     build: .
     restart: unless-stopped
+    expose:
+      - "3325"
     volumes:
       - bot-data:/data
     environment:
@@ -11,6 +13,8 @@ services:
       - KESTRA_TRIAGE_WEBHOOK_KEY=${KESTRA_TRIAGE_WEBHOOK_KEY}
       - KESTRA_ALERT_WEBHOOK_KEY=${KESTRA_ALERT_WEBHOOK_KEY}
       - KESTRA_CONFIG_WEBHOOK_KEY=${KESTRA_CONFIG_WEBHOOK_KEY}
+      - GITHUB_APP_URL=${GITHUB_APP_URL}
+      - CALLBACK_PORT=3325
 
 volumes:
   bot-data:

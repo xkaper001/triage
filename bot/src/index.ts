@@ -41,8 +41,8 @@ client.on(Events.GuildCreate, async (guild) => {
   try {
     const channel = guild.systemChannel
       ?? guild.channels.cache
-          .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me!)?.has("SendMessages") === true)
-          .first();
+        .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me!)?.has("SendMessages") === true)
+        .first();
     if (channel && channel.isTextBased()) {
       await channel.send({ embeds: [welcomeEmbed()] });
     }
@@ -71,9 +71,9 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   const type = interaction.isChatInputCommand() ? "command"
     : interaction.isButton() ? "button"
-    : interaction.isModalSubmit() ? "modal"
-    : interaction.isChannelSelectMenu() ? "channel_select"
-    : "other";
+      : interaction.isModalSubmit() ? "modal"
+        : interaction.isChannelSelectMenu() ? "channel_select"
+          : "other";
   console.log(`[interaction] type=${type} guild=${interaction.guildId} user=${interaction.user?.id}`);
   try {
     if (interaction.isChatInputCommand()) await handleCommand(interaction, env);
@@ -84,7 +84,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } catch (err) {
     console.error(`[interaction] UNHANDLED ERROR type=${type}:`, err);
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: "An error occurred.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.reply({ content: "An error occurred.", flags: MessageFlags.Ephemeral }).catch(() => { });
     }
   }
 });
