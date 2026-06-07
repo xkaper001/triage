@@ -3,8 +3,8 @@ import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
 import { getForumChannelId } from "./store.js";
 
-// ➕ (U+2795) — confirm you're affected by this unknown issue
-const CONFIRM_EMOJIS = new Set(["➕", "heavy_plus_sign"]);
+// ⬆️ (U+2B06 U+FE0F) — upvote to confirm you're affected by this unknown issue
+const CONFIRM_EMOJIS = new Set(["⬆️", "arrow_up"]);
 
 export async function handleReactionAdd(
   reaction: MessageReaction | PartialMessageReaction,

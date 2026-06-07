@@ -94,7 +94,7 @@ tasks:
             Reply message templates (replace AUTHOR_ID with the actual author_id from context, and AUTHOR_NAME with author_username):
             - github_match: "Hey <@AUTHOR_ID> ✅ Found a matching GitHub issue: **[TITLE](URL)** (#NUMBER). Follow that issue for updates."
             - discord_duplicate: "Hey <@AUTHOR_ID> ⚠️ This looks like a duplicate of an existing report: PERMALINK. The original thread has been linked."
-            - no_match: "Hey <@AUTHOR_ID> ℹ️ This looks like a new issue — we haven't seen it before. React with ➕ if you're affected too — once 3 people confirm, a GitHub issue will be auto-filed."
+            - no_match: "Hey <@AUTHOR_ID> ℹ️ This looks like a new issue — we haven't seen it before. React with ⬆️ if you're affected too — once 3 people confirm, a GitHub issue will be auto-filed."
 
             RULES:
             - You MUST execute at least one of the github or discord coral sql tool call before producing any answer.
@@ -502,9 +502,9 @@ tasks:
             - id: no_match_actions
               type: io.kestra.plugin.core.flow.Parallel
               tasks:
-                - id: add_reaction_plus
+                - id: add_reaction_upvote
                   type: io.kestra.plugin.core.http.Request
-                  uri: "https://discord.com/api/v10/channels/{{ inputs.discord_thread_id }}/messages/{{ inputs.first_message_id }}/reactions/%E2%9E%95/@me"
+                  uri: "https://discord.com/api/v10/channels/{{ inputs.discord_thread_id }}/messages/{{ inputs.first_message_id }}/reactions/%E2%AC%86%EF%B8%8F/@me"
                   method: PUT
                   headers:
                     Authorization: "Bot {{ kv('DISCORD_BOT_TOKEN') }}"
@@ -521,7 +521,7 @@ tasks:
               type: io.kestra.plugin.core.log.Log
               level: DEBUG
               message: |
-                [no_match_actions] add_reaction_plus.status={{ outputs.add_reaction_plus.code }}
+                [no_match_actions] add_reaction_upvote.status={{ outputs.add_reaction_upvote.code }}
                 store_unknown_thread key=GUILD_{{ inputs.discord_guild_id }}_THREAD_{{ inputs.discord_thread_id }}_TRIAGE
 
     defaults:

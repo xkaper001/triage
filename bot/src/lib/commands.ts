@@ -20,6 +20,29 @@ import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
 import { getForumChannelId, setForumChannelId } from "./store.js";
 
+const DISCORD_API = "https://discord.com/api/v10";
+
+interface DiscordForumTag {
+  id?: string;
+  name: string;
+  moderated: boolean;
+  emoji_id: null;
+  emoji_name: string | null;
+}
+
+const TRIAGE_TAGS: Omit<DiscordForumTag, "id">[] = [
+  { name: "Bug",             moderated: false, emoji_id: null, emoji_name: "🐛" },
+  { name: "Feature Request", moderated: false, emoji_id: null, emoji_name: "✨" },
+  { name: "Question",        moderated: false, emoji_id: null, emoji_name: "❓" },
+  { name: "Known Issue",     moderated: true,  emoji_id: null, emoji_name: "📋" },
+  { name: "Duplicate",       moderated: true,  emoji_id: null, emoji_name: "🔁" },
+  { name: "Needs Review",    moderated: true,  emoji_id: null, emoji_name: "🆕" },
+  { name: "Reported",        moderated: true,  emoji_id: null, emoji_name: "✅" },
+  { name: "Fixed",           moderated: true,  emoji_id: null, emoji_name: "🎉" },
+  { name: "Won't Fix",       moderated: true,  emoji_id: null, emoji_name: "🚫" },
+  { name: "By Design",       moderated: true,  emoji_id: null, emoji_name: "🔧" },
+];
+
 export function welcomeEmbed() {
   return new EmbedBuilder()
     .setTitle("👋 Thanks for adding Triage Bot!")
@@ -67,6 +90,7 @@ function helpEmbed() {
     .setColor(0x5865f2)
     .addFields(
       { name: "/setup", value: "Open the configuration panel (AI provider, GitHub, forum channel)", inline: false },
+      { name: "/setup-tags", value: "Create triage tags on the forum channel (Known Issue, Duplicate, Needs Review, etc.)", inline: false },
       { name: "/repo [owner/repo]", value: "Set the default GitHub repository for issue filing", inline: false },
       { name: "/set-api-key", value: "Quickly update the Gemini API key", inline: false },
       { name: "/set-baseurl [url]", value: "Update the OpenAI-compatible base URL (optional, for custom endpoints)", inline: false },
@@ -159,6 +183,61 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
         );
         await interaction.showModal(m);
       }
+      break;
+    }
+
+    case "setup-tags": {
+      await interaction.deferReply(EPH);
+
+      const forumChannelId = getForumChannelId(guildId);
+      if (!forumChannelId) {
+        await interaction.editReply({ content: "⚠️ No forum channel set. Use `/set-forum-channel` first." });
+        break;
+      }
+
+      const channelRes = await fetch(`${DISCORD_API}/channels/${forumChannelId}`, {
+        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+      });
+      if (!channelRes.ok) {
+        await interaction.editReply({ content: `⚠️ Failed to fetch channel: ${channelRes.status}` });
+        break;
+      }
+      const channelData = await channelRes.json() as { available_tags?: (DiscordForumTag & { id: string })[] };
+      const existingTags = channelData.available_tags ?? [];
+
+      const existingNames = new Set(existingTags.map((t) => t.name.toLowerCase()));
+      const toAdd = TRIAGE_TAGS.filter((t) => !existingNames.has(t.name.toLowerCase()));
+      const allTags = [...existingTags, ...toAdd];
+
+      const patchRes = await fetch(`${DISCORD_API}/channels/${forumChannelId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ available_tags: allTags }),
+      });
+      if (!patchRes.ok) {
+        const err = await patchRes.text();
+        await interaction.editReply({ content: `⚠️ Failed to update tags: ${patchRes.status} — ${err}` });
+        break;
+      }
+      const updated = await patchRes.json() as { available_tags: (DiscordForumTag & { id: string })[] };
+
+      const tagMap: Record<string, string> = {};
+      for (const tag of updated.available_tags) {
+        const key = tag.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+        tagMap[key] = tag.id;
+      }
+      await postConfig(env, guildId, "TAG_MAP", JSON.stringify(tagMap));
+
+      const lines = updated.available_tags.map(
+        (t) => `${t.emoji_name ?? "•"} **${t.name}** (\`${t.id}\`)${t.moderated ? " — mod only" : ""}`,
+      ).join("\n");
+      const skipped = TRIAGE_TAGS.length - toAdd.length;
+      await interaction.editReply({
+        content: `✅ Tags configured on <#${forumChannelId}> — **${toAdd.length}** added, **${skipped}** already existed.\n\n${lines}`,
+      });
       break;
     }
 

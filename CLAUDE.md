@@ -27,7 +27,7 @@ Two-layer system: the bot is a thin relay, Kestra is the orchestrator.
 
 ```
 Discord forum post → bot (ThreadCreate) → Kestra webhook → AI triage → Discord actions
-Discord ➕ reaction → bot (ReactionAdd)  → Kestra webhook → escalation → GitHub issue
+Discord ⬆️ upvote reaction → bot (ReactionAdd)  → Kestra webhook → escalation → GitHub issue
 Slash command       → bot (Interaction)  → Kestra webhook → KV store (per-guild config)
 ```
 
@@ -36,7 +36,7 @@ Slash command       → bot (Interaction)  → Kestra webhook → KV store (per-
 - **`types.ts`** — `BotEnv` (6 required env vars), `webhookUrl(env, flow)`. The `FLOW_MAP` maps `FlowId` (`"triage" | "alert" | "config"`) to webhook key + Kestra flow ID. Adding a new webhook flow requires updating this map and `BotEnv`.
 - **`lib/store.ts`** — forum channel config persisted to `/data/config.json` (default) or `CONFIG_PATH`. Only local bot state; all other per-guild config lives in Kestra KV.
 - **`lib/relay.ts`** — handles `ThreadCreate`. Fires when a new post appears in the watched forum channel. Fetches the starter message to get `first_message_id` (required by Discord reactions API).
-- **`lib/reaction.ts`** — handles `MessageReactionAdd` for ➕ emoji only. Filters to `PublicThread` children of the configured forum channel. Sends Discord's `reaction.count` directly (avoids double-counting).
+- **`lib/reaction.ts`** — handles `MessageReactionAdd` for ⬆️ upvote emoji only. Filters to `PublicThread` children of the configured forum channel. Sends Discord's `reaction.count` directly (avoids double-counting).
 - **`lib/commands.ts`** — slash commands, modals, and buttons. `/set-forum-channel` stores locally via `store.ts`. All other config (`/setup`, `/set-api-key`, etc.) POSTs to the `update_config` Kestra webhook, which writes to KV as `GUILD_{guild_id}_{KEY}`.
 
 ESM project (`"type": "module"`) — imports inside `.ts` files must use `.js` extensions.
@@ -46,7 +46,7 @@ ESM project (`"type": "module"`) — imports inside `.ts` files must use `.js` e
 | File | Webhook key | Trigger |
 |---|---|---|
 | `discord_triage.yaml` | `3Kua0DFmXL` (`KESTRA_TRIAGE_WEBHOOK_KEY`) | New forum post |
-| `triage_draft_alert.yaml` | `AlertKey9x2` (`KESTRA_ALERT_WEBHOOK_KEY`) | ➕ reaction on no_match post |
+| `triage_draft_alert.yaml` | `AlertKey9x2` (`KESTRA_ALERT_WEBHOOK_KEY`) | ⬆️ upvote on no_match post |
 | `update_config.yaml` | `0j8BRKoiXR` (`KESTRA_CONFIG_WEBHOOK_KEY`) | Slash command config write |
 
 **`discord_triage.yaml`** — main flow:
@@ -57,7 +57,7 @@ ESM project (`"type": "module"`) — imports inside `.ts` files must use `.js` e
 5. Branch on outcome:
    - `github_match` → ✅ reaction
    - `discord_duplicate` → archive new thread, notify original thread, 🔁 reaction; increment `_REPORTERS` KV counter; at ≥3 dup posts → auto-draft + create GitHub issue
-   - `no_match` → ➕ reaction, store `{"status":"no_match"}` in `GUILD_{gid}_THREAD_{tid}_TRIAGE`
+   - `no_match` → ⬆️ upvote reaction, store `{"status":"no_match"}` in `GUILD_{gid}_THREAD_{tid}_TRIAGE`
 
 **`triage_draft_alert.yaml`** — reaction escalation:
 1. Read `_TRIAGE` KV key; skip if not `no_match` or already `escalated`

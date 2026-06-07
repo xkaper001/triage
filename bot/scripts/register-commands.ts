@@ -48,6 +48,12 @@ const commands = [
     ],
   },
   {
+    name: "setup-tags",
+    type: 1,
+    description: "Create triage tags on the forum channel (Known Issue, Duplicate, Needs Review, etc.)",
+    default_member_permissions: ADMIN_ONLY,
+  },
+  {
     name: "set-forum-channel",
     type: 1,
     description: "Set the forum channel to monitor for new posts",

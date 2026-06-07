@@ -12,9 +12,9 @@ New forum post
       ⚠️  No GitHub match → search Discord forum for duplicate posts
           🔁 Duplicate found → archive new post, notify original, increment reporter count
               3+ dup posts → auto-create GitHub issue
-          ℹ️  No duplicate → reply "unknown issue", add ➕ reaction
+          ℹ️  No duplicate → reply "unknown issue", add ⬆️ upvote
 
-➕ Reaction on unknown-issue post (by any user)
+⬆️ Upvote on unknown-issue post (by any user)
   → bot relays reaction count to Kestra (triage_draft_alert flow)
   → at count ≥ 3 → draft + create GitHub issue → reply with link
 ```

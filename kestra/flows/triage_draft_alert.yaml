@@ -1,7 +1,7 @@
 id: triage_draft_alert
 namespace: discord.triage
 description: >
-  Handles ➕ reaction confirmations on unknown-issue posts.
+  Handles ⬆️ upvote confirmations on unknown-issue posts.
   Uses Discord's reaction count (relayed by bot) to avoid double-counting.
   Auto-creates GitHub issue when reaction_count ≥ 3; marks thread as escalated
   in KV to prevent duplicate issues. Webhook key must match KESTRA_ALERT_WEBHOOK_KEY
@@ -101,7 +101,7 @@ tasks:
 
           Thread channel_id: {{ inputs.channel_id }}
           Guild: {{ inputs.guild_id }}
-          Confirmed by {{ inputs.reaction_count }} users via ➕ reactions.
+          Confirmed by {{ inputs.reaction_count }} users via ⬆️ upvotes.
         provider:
           type: io.kestra.plugin.ai.provider.GoogleGemini
           apiKey: "{{ kv('GUILD_' ~ inputs.guild_id ~ '_GEMINI_API_KEY') }}"
