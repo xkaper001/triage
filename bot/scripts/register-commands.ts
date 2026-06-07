@@ -75,6 +75,12 @@ const commands = [
     default_member_permissions: ADMIN_ONLY,
   },
   {
+    name: "install-github-app",
+    type: 1,
+    description: "Step-by-step guide to install the Triage GitHub App and link your repo",
+    default_member_permissions: ADMIN_ONLY,
+  },
+  {
     name: "create-github-issue",
     type: 1,
     description: "Manually file a GitHub issue from this forum post (admin only)",

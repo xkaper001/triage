@@ -53,7 +53,7 @@ export function welcomeEmbed() {
     .addFields(
       { name: "Step 1 — Set your forum channel", value: "Run `/setup` → click **Forum Channel** and pick the forum to monitor.", inline: false },
       { name: "Step 2 — Add your Gemini API key", value: "Run `/setup` → click **AI Provider** → enter your Gemini API key (`AIzaSy...`).", inline: false },
-      { name: "Step 3 — Link your GitHub repo", value: "Run `/setup` → click **GitHub** → enter your repo (`owner/repo`). The triage bot handles auth automatically.", inline: false },
+      { name: "Step 3 — Install the GitHub App", value: "Install the Triage GitHub App on your repo, then run `/setup` → **GitHub** → enter your repo and the Installation ID (from the URL after installing).", inline: false },
       { name: "Step 4 — Done!", value: "Post something in your forum channel and watch me triage it. Run `/status` anytime to confirm the channel is set.", inline: false },
       { name: "Need help?", value: "Run `/help` for a full command reference.", inline: false },
     )
@@ -71,7 +71,7 @@ function setupPanelData(guildId: string) {
         inline: false,
       },
       { name: "Gemini API Key", value: "Set via **AI Provider** button", inline: false },
-      { name: "GitHub Repo", value: "Set via **GitHub** button (owner/repo only — app auth is global)", inline: false }
+      { name: "GitHub", value: "Set via **GitHub** button (repo + Installation ID after installing the GitHub App)", inline: false }
     )
     .setColor(forumId ? 0x57f287 : 0xfee75c)
     .setFooter({ text: "AI & GitHub credentials are stored securely in Kestra KV." });
@@ -96,6 +96,7 @@ function helpEmbed() {
       { name: "/set-api-key", value: "Quickly update the Gemini API key", inline: false },
       { name: "/set-baseurl [url]", value: "Update the OpenAI-compatible base URL (optional, for custom endpoints)", inline: false },
       { name: "/set-forum-channel #channel", value: "Set the forum channel to monitor for new posts", inline: false },
+      { name: "/install-github-app", value: "Step-by-step guide to install the Triage GitHub App and link your repo", inline: false },
       { name: "/create-github-issue", value: "Manually file a GitHub issue from this forum post (admin only)", inline: false },
       { name: "/status", value: "Show the currently monitored forum channel", inline: false },
       { name: "/help", value: "Show this message", inline: false },
@@ -259,6 +260,26 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, en
       break;
     }
 
+    case "install-github-app": {
+      const installRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        ...(env.GITHUB_APP_URL
+          ? [new ButtonBuilder().setLabel("Install GitHub App").setStyle(ButtonStyle.Link).setURL(env.GITHUB_APP_URL).setEmoji("🐙")]
+          : []),
+        new ButtonBuilder().setCustomId("install_github:configure").setLabel("I've installed it — enter repo & ID").setStyle(ButtonStyle.Primary),
+      );
+      const embed = new EmbedBuilder()
+        .setTitle("🐙 Install the Triage GitHub App")
+        .setColor(0x5865f2)
+        .setDescription("The Triage bot creates GitHub issues on your behalf. Install it on your repo first, then enter your details.")
+        .addFields(
+          { name: "Step 1 — Install", value: env.GITHUB_APP_URL ? `Click **Install GitHub App** below.` : "Install the GitHub App on your repo via the app's page.", inline: false },
+          { name: "Step 2 — Get Installation ID", value: "After installing, check the URL:\n`github.com/settings/installations/**{id}**`\nCopy that number.", inline: false },
+          { name: "Step 3 — Configure", value: "Click **I've installed it** below and enter your repo + installation ID.", inline: false },
+        );
+      await interaction.reply({ embeds: [embed], components: [installRow], ...EPH });
+      break;
+    }
+
     case "create-github-issue": {
       const channel = interaction.channel;
       if (!channel || channel.type !== ChannelType.PublicThread) {
@@ -327,6 +348,12 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
           .setStyle(TextInputStyle.Short).setPlaceholder("owner/repo")
           .setRequired(true).setMaxLength(200),
       ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("installation_id").setLabel("GitHub App Installation ID")
+          .setStyle(TextInputStyle.Short).setPlaceholder("12345678")
+          .setRequired(true).setMaxLength(20),
+      ),
     );
     await interaction.showModal(m);
     return;
@@ -347,6 +374,26 @@ export async function handleButton(interaction: ButtonInteraction, env: BotEnv):
 
   if (customId === "setup:back") {
     await interaction.update(setupPanelData(guildId));
+    return;
+  }
+
+  if (customId === "install_github:configure") {
+    const m = new ModalBuilder().setCustomId("install_github_modal").setTitle("GitHub App Configuration");
+    m.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("repo").setLabel("Repository (owner/repo)")
+          .setStyle(TextInputStyle.Short).setPlaceholder("owner/repo")
+          .setRequired(true).setMaxLength(200),
+      ),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("installation_id").setLabel("Installation ID")
+          .setStyle(TextInputStyle.Short).setPlaceholder("12345678")
+          .setRequired(true).setMaxLength(20),
+      ),
+    );
+    await interaction.showModal(m);
     return;
   }
 
@@ -407,8 +454,12 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
     }
 
     case "setup_github_modal": {
-      const ok = await postConfig(env, guildId, "DEFAULT_REPO", get("repo"));
-      await interaction.reply({ content: ok ? "✅ GitHub repo configured." : "⚠️ Failed to save — check bot logs.", ...EPH });
+      const results = await Promise.all([
+        postConfig(env, guildId, "DEFAULT_REPO", get("repo")),
+        postConfig(env, guildId, "GITHUB_APP_INSTALLATION_ID", get("installation_id")),
+      ]);
+      const ok = results.every(Boolean);
+      await interaction.reply({ content: ok ? "✅ GitHub configured." : "⚠️ Failed to save — check bot logs.", ...EPH });
       break;
     }
 
@@ -421,6 +472,16 @@ export async function handleModal(interaction: ModalSubmitInteraction, env: BotE
     case "set_baseurl_modal": {
       const ok = await postConfig(env, guildId, "OPENAI_BASE_URL", get("base_url"));
       await interaction.reply({ content: ok ? "✅ Base URL saved." : "⚠️ Failed.", ...EPH });
+      break;
+    }
+
+    case "install_github_modal": {
+      const results = await Promise.all([
+        postConfig(env, guildId, "DEFAULT_REPO", get("repo")),
+        postConfig(env, guildId, "GITHUB_APP_INSTALLATION_ID", get("installation_id")),
+      ]);
+      const ok = results.every(Boolean);
+      await interaction.reply({ content: ok ? "✅ GitHub App configured — issues will now be filed as the Triage bot." : "⚠️ Failed to save — check bot logs.", ...EPH });
       break;
     }
 

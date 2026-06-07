@@ -5,6 +5,7 @@ export interface BotEnv {
   KESTRA_TRIAGE_WEBHOOK_KEY: string;
   KESTRA_ALERT_WEBHOOK_KEY: string;
   KESTRA_CONFIG_WEBHOOK_KEY: string;
+  GITHUB_APP_URL?: string;
 }
 
 export function loadEnv(): BotEnv {
@@ -26,6 +27,7 @@ export function loadEnv(): BotEnv {
     KESTRA_TRIAGE_WEBHOOK_KEY: process.env.KESTRA_TRIAGE_WEBHOOK_KEY!,
     KESTRA_ALERT_WEBHOOK_KEY: process.env.KESTRA_ALERT_WEBHOOK_KEY!,
     KESTRA_CONFIG_WEBHOOK_KEY: process.env.KESTRA_CONFIG_WEBHOOK_KEY!,
+    GITHUB_APP_URL: process.env.GITHUB_APP_URL,
   };
 }
 
