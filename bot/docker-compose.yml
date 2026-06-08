@@ -6,6 +6,12 @@ services:
       - "3325"
     volumes:
       - bot-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3325/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - KESTRA_CLOUD_URL=${KESTRA_CLOUD_URL}
