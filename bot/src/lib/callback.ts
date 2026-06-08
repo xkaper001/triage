@@ -22,9 +22,20 @@ async function fetchInstallationRepos(appId: string, privateKey: string, install
     "X-GitHub-Api-Version": "2022-11-28",
   };
 
+  // Exchange JWT for installation access token
+  const tokenRes = await fetch(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    { method: "POST", headers },
+  );
+  if (!tokenRes.ok) {
+    console.warn(`[callback] access_tokens failed: ${tokenRes.status}`);
+    return [];
+  }
+  const { token } = await tokenRes.json() as { token: string };
+
   const res = await fetch(
-    `https://api.github.com/app/installations/${installationId}/repositories?per_page=100`,
-    { headers },
+    `https://api.github.com/installation/repositories?per_page=100`,
+    { headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } },
   );
   if (!res.ok) {
     console.warn(`[callback] repos fetch failed: ${res.status}`);
@@ -34,20 +45,98 @@ async function fetchInstallationRepos(appId: string, privateKey: string, install
   return data.repositories.map((r) => r.full_name);
 }
 
-const SUCCESS_HTML = (installationId: string, repos: string[]) => `<!DOCTYPE html>
-<html><head><title>GitHub App Installed</title>
+const SUCCESS_HTML = (_installationId: string, repos: string[]) => `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GitHub App Installed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:480px;margin:80px auto;text-align:center;color:#1a1a2e;padding:0 20px}
-  h1{color:#5865f2;font-size:2rem}
-  code{background:#f0f0f0;padding:2px 8px;border-radius:4px;font-size:.9rem}
-  p{color:#555;line-height:1.6}
-  ul{text-align:left;display:inline-block;margin:0 auto}
-</style></head>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:#0c0c0e;
+    color:#c9c9d4;
+    font-family:"Inter",system-ui,sans-serif;
+    font-size:16px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:100vh;
+    padding:24px;
+  }
+  .card{
+    max-width:460px;
+    width:100%;
+    text-align:center;
+  }
+  .icon{
+    width:52px;height:52px;
+    background:rgba(74,222,128,.12);
+    border:1px solid rgba(74,222,128,.25);
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    margin:0 auto 28px;
+    font-size:22px;
+  }
+  h1{
+    font-family:"Instrument Serif",Georgia,serif;
+    font-size:2.25rem;
+    font-weight:400;
+    color:#f0f0f5;
+    line-height:1.15;
+    letter-spacing:-.01em;
+    margin-bottom:14px;
+  }
+  .sub{
+    color:#7e7e96;
+    font-size:.9375rem;
+    line-height:1.65;
+    margin-bottom:32px;
+  }
+  .repos{
+    background:#141418;
+    border:1px solid #1e1e28;
+    border-radius:10px;
+    padding:16px 20px;
+    margin-bottom:28px;
+    text-align:left;
+  }
+  .repos-label{
+    font-size:.75rem;
+    font-weight:500;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    color:#4a4a60;
+    margin-bottom:10px;
+  }
+  .repos ul{list-style:none}
+  .repos li{
+    font-size:.875rem;
+    color:#9090aa;
+    padding:5px 0;
+    border-bottom:1px solid #1a1a22;
+    font-family:"SF Mono","Fira Code",monospace;
+  }
+  .repos li:last-child{border-bottom:none}
+  .hint{
+    font-size:.875rem;
+    color:#4a4a60;
+    line-height:1.6;
+  }
+  .hint strong{color:#7e7e96;font-weight:500}
+</style>
+</head>
 <body>
-  <h1>✅ GitHub App installed!</h1>
-  <p>Installation ID <code>${installationId}</code> saved.</p>
-  ${repos.length ? `<p>Repos available in Discord:<br><ul>${repos.map(r => `<li><code>${r}</code></li>`).join("")}</ul></p>` : ""}
-  <p>Return to Discord and click <strong>Set Repository</strong> to pick one.</p>
+  <div class="card">
+    <div class="icon">&#10003;</div>
+    <h1>GitHub App installed</h1>
+    <p class="sub">Your GitHub App has been connected successfully.</p>
+    ${repos.length ? `<div class="repos"><div class="repos-label">${repos.length} repo${repos.length !== 1 ? "s" : ""} available</div><ul>${repos.map(r => `<li>${r}</li>`).join("")}</ul></div>` : ""}
+    <p class="hint">Return to Discord and click <strong>Set Repository</strong> to pick one.</p>
+  </div>
 </body></html>`;
 
 export function startCallbackServer(env: BotEnv, client: Client): void {
