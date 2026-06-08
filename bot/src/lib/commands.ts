@@ -22,7 +22,7 @@ const EPH = { flags: MessageFlags.Ephemeral } as const;
 import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
 import { getForumChannelId, setForumChannelId } from "./store.js";
-import { getGuildRepos } from "./callback.js";
+import { getGuildRepos } from "./store.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 

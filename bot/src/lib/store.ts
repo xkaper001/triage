@@ -5,6 +5,7 @@ const CONFIG_PATH = process.env.CONFIG_PATH ?? "/data/config.json";
 
 interface Config {
   forumChannels?: Record<string, string>; // guildId -> channelId
+  guildRepos?: Record<string, string[]>;
 }
 
 let _config: Config = {};
@@ -34,3 +35,14 @@ export function setForumChannelId(guildId: string, channelId: string): void {
   mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(_config, null, 2));
 }
+
+export function getGuildRepos(guildId: string): string[] {
+  return _config.guildRepos?.[guildId] ?? [];
+}
+
+export function setGuildRepos(guildId: string, repos: string[]): void {
+  _config.guildRepos = { ..._config.guildRepos, [guildId]: repos };
+  mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+  writeFileSync(CONFIG_PATH, JSON.stringify(_config, null, 2));
+}
+

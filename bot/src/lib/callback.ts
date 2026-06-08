@@ -3,13 +3,7 @@ import crypto from "node:crypto";
 import type { Client } from "discord.js";
 import type { BotEnv } from "../types.js";
 import { webhookUrl } from "../types.js";
-
-// guildId → list of "owner/repo" strings (cached after install)
-const repoCache = new Map<string, string[]>();
-
-export function getGuildRepos(guildId: string): string[] {
-  return repoCache.get(guildId) ?? [];
-}
+import { setGuildRepos } from "./store.js";
 
 function makeAppJWT(appId: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
@@ -105,7 +99,7 @@ export function startCallbackServer(env: BotEnv, client: Client): void {
       let repos: string[] = [];
       if (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) {
         repos = await fetchInstallationRepos(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY, installationId);
-        if (repos.length) repoCache.set(guildId, repos);
+        if (repos.length) setGuildRepos(guildId, repos);
         console.log(`[callback] cached ${repos.length} repos for guild=${guildId}`);
       }
 
